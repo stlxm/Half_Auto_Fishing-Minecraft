@@ -62,11 +62,11 @@ def make_templates(samples):
     duration = min(len(samples), int(0.8 * SAMPLE_RATE))
     if duration < int(0.25 * SAMPLE_RATE):
         raise ValueError("検出音は0.25秒以上必要です")
-    power = np.convolve(samples * samples,
-                        np.ones(duration // 8, dtype=np.float32) / (duration // 8),
-                        mode="valid")
-    peak = int(np.argmax(power))
-    start = max(0, min(len(samples) - duration, peak - duration // 2))
+    # Use cumulative energy to avoid a quadratic-time convolution on long files.
+    squared = np.square(samples, dtype=np.float64)
+    cumulative = np.concatenate(([0.0], np.cumsum(squared)))
+    window_energy = cumulative[duration:] - cumulative[:-duration]
+    start = int(np.argmax(window_energy))
     segment = samples[start:start + duration]
     if np.sqrt(np.mean(segment ** 2)) < 0.0005:
         raise ValueError("検出音が無音または小さすぎます")
