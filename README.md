@@ -77,7 +77,7 @@ Windowsのアクティブウィンドウ切替にはOSによる制約があり�
 
 作成したZIPには `pack.mcmeta`、`assets/minecraft/sounds.json`、`assets/minecraft/sounds/custom/fishing_alert.ogg` が含まれます。変換処理はPC内で完結し、元のMP3/WAV/OGGファイルは変更しません。音声は選択した1.0～5.0倍に増幅した上で、過大なピークをリミッターで抑えます。元音源が大音量の場合、リミッターが働くため実際の聴感上の音量が指定倍率になるとは限らず、音が圧縮される場合があります。再生音量には十分ご注意ください。変換用FFmpegはEXEに同梱するため別途インストール不要です。保存先に同名のZIPがある場合は上書きされるため、必要なファイルは別名で保存してください。
 
-釣りの水しぶき音 `entity.fishing_bobber.splash` を置き換えます。**魚がかかったときだけでなく、ウキの着水時にも鳴る場合があります。** このアプリはヒットを自動検出しません。音が大きすぎる場合はMinecraftやPC側の設定、または元音声の音量を調整してください。
+釣りの水しぶき音 `entity.fishing_bobber.splash` を置き換えます。**魚がかかったときだけでなく、ウキの着水時にも鳴る場合があります。** このリソースパックの音声をPC再生音から照合する自動機能はありますが、着水音とヒット音を確実に区別するものではありません。音が大きすぎる場合はMinecraftやPC側の設定、または元音声の音量を調整してください。
 
 ### 既存の空テンプレートZIPについて
 
@@ -101,7 +101,43 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all imageio
 
 完成品は `dist/HalfAutoFishing.exe` です。GitHubの **Actions → Windows EXE build → Run workflow** からもビルドできます。push時にも自動ビルドします。
 
-## 7. トラブル対応
+## 7. モジュール不足の解決（Windows・コピペ用）
+
+**先に、起動したものが `HalfAutoFishing.exe` か、ソースコードの `src/fishing_app.py` か確認してください。対処方法が異なります。**
+
+### A. Pythonでソースを実行している場合
+
+Windowsの**PowerShell**を開き、GitHubから取得したプロジェクトフォルダ（`requirements.txt` がある場所）で、次のコマンドを**1行ずつ**実行してください。
+
+```powershell
+py -3.12 -m pip install --upgrade pip
+py -3.12 -m pip install -r requirements.txt
+py -3.12 src/fishing_app.py
+```
+
+`requirements.txt` が見つからない場合は、PowerShellでプロジェクトフォルダに移動してから実行してください。たとえばダウンロードしたZIPをデスクトップの `Half_Auto_Fishing-Minecraft` フォルダに展開した場合は、以下のように移動します（実際の保存先に合わせて変更してください）。
+
+```powershell
+cd "$env:USERPROFILE\Desktop\Half_Auto_Fishing-Minecraft"
+```
+
+`py -3.12` が見つからない場合はPython 3.12をインストールしてください。既にPython 3.12が起動できる場合は、同じPythonの `python -m pip` を使ってください。
+
+**`requirements.txt` を使わずに必要モジュールを一括インストールする場合のコピペ用コマンド**（WindowsのPython 3.12向け）：
+
+```powershell
+py -3.12 -m pip install "keyboard>=0.13.5,<1" "PyAutoGUI>=0.9.54,<1" "imageio-ffmpeg>=0.6.0,<1" "numpy>=1.26,<3" "scipy>=1.14,<2" "soundcard>=0.4.5,<1"
+```
+
+Pythonの標準機能である `tkinter`、`ctypes`、`json` などは通常pipで追加インストールする必要はありません。
+
+### B. GitHub ActionsからダウンロードしたEXEで「No module named ...」が出る場合
+
+**EXEは必要なPythonライブラリを同梱する形式です。上のpipコマンドを実行しても、EXE内のモジュール不足は通常解決しません。** まず最新の成功済み [Windows EXE build](../../actions/workflows/windows-build.yml) のArtifactsから`HalfAutoFishing-Windows`を再ダウンロードし、ZIPを展開して**古いEXEを終了してから**入れ替えてください。以前のEXEを間違えて起動していないか、保存場所も確認してください。
+
+最新版EXEでも同じエラーが出るときは、エラーメッセージに表示された**モジュール名（`No module named '...' `）の全文と、実行履歴のリンク**を共有してください。EXEのビルド設定で同梱漏れや互換性の問題を調査する必要があります。DLL読み込みエラーやWindowsセキュリティ機能によるファイル隔離が原因の場合もあり、その際は正確なエラー文が必要です。出所が確認できないDLLを別サイトからダウンロードして配置することは避けてください。
+
+## 8. トラブル対応
 
 - **途中から操作できなくなった：** キーの受信表示がないときは「キー検知を再登録」を押してください。受信表示があるときは画面切り替えのエラーを確認してください。ゲームを再起動した場合は「停止」→「再検索」→ゲーム画面を再選択→「保存して開始」をお試しください。ウィンドウ切替に失敗した場合はアプリ画面の状態メッセージも確認してください。\n- **F8で動かない：** 「保存して開始」を押したか確認し、「別の画面からMinecraftへ切り替えて操作する」をオンにする。Minecraftが見つからない場合はゲーム本体を起動して「再検索」でゲームウィンドウを選択する。前面化に失敗する場合はウィンドウモードで試す。管理者権限が異なる場合やゲーム側の入力処理により反映されない場合があります。
 - **Escでメニューが開く：** 「右クリックのみ」に戻す。メニューが開いていると釣り竿を操作できません。
@@ -110,7 +146,7 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all imageio
 - **WinError 17（別のディスクドライブへ移動できない）：** 旧EXEの保存処理の不具合です。最新版EXEに更新すると、CドライブからDドライブなど別ドライブへの保存にも対応します。古いEXEでは一時的にCドライブへ保存してから手動で移動してください。\n- **音声の変換に失敗する：** ファイルがMP3/WAV/OGGか確認する。壊れた音声や音声トラックがないファイルには対応していません。保存先の権限や空き容量も確認してください。\n- **ZIPを導入しても音が変わらない：** 作成したZIPをresourcepacks直下に置き、有効化する。別のリソースパックで同じサウンドが上書きされていないか確認してください。\n- **EXEが見つからない：** Actionsのビルドが成功しているか確認する。成果物はリポジトリのソース一覧ではなく実行履歴のArtifacts内にあります。
 - **動作時にエラーが出る：** Python版をコマンドプロンプトから実行し、表示されるエラーを確認してください。
 
-## 8. 更新・保守
+## 9. 更新・保守
 
 ソース変更後、GitHubのmainブランチにpushするとActionsでWindows用EXEを再生成します。新しい実行履歴のArtifactsから再ダウンロードして旧EXEと交換してください。ユーザー設定はAPPDATAに残ります。変更の前後にシングルプレイでキー操作・停止・Minecraft以外での誤操作防止を確認してください。
 
