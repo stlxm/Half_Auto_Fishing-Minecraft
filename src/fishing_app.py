@@ -10,6 +10,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from resource_pack import create_resource_pack
+from window_control import (list_windows, default_minecraft_window,
+                            activate_window, is_foreground, window_title)
 
 import keyboard
 import pyautogui
@@ -30,63 +32,6 @@ def config_path():
     base = Path(os.getenv("APPDATA") or Path.home()) / "HalfAutoFishing"
     base.mkdir(parents=True, exist_ok=True)
     return base / "config.json"
-
-
-def minecraft_active():
-    user32 = ctypes.windll.user32
-    hwnd = user32.GetForegroundWindow()
-    size = user32.GetWindowTextLengthW(hwnd)
-    title = ctypes.create_unicode_buffer(size + 1)
-    user32.GetWindowTextW(hwnd, title, size + 1)
-    return "minecraft" in title.value.casefold()
-
-
-def find_minecraft_window():
-    """Find the Minecraft game window, excluding the launcher."""
-    user32 = ctypes.windll.user32
-    found = []
-    callback_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
-
-    def check(hwnd, _):
-        if not user32.IsWindowVisible(hwnd):
-            return True
-        length = user32.GetWindowTextLengthW(hwnd)
-        if not length:
-            return True
-        title = ctypes.create_unicode_buffer(length + 1)
-        user32.GetWindowTextW(hwnd, title, length + 1)
-        name = title.value.casefold()
-        if "minecraft" in name and "launcher" not in name:
-            found.append(hwnd)
-        return True
-
-    callback = callback_type(check)
-    user32.EnumWindows(callback, 0)
-    active = user32.GetForegroundWindow()
-    if active in found:
-        return active
-    return found[0] if found else None
-
-
-def activate_minecraft():
-    """Bring the game to front. Refuse to send keys if activation fails."""
-    user32 = ctypes.windll.user32
-    hwnd = find_minecraft_window()
-    if not hwnd:
-        return False, "Minecraftのゲーム画面が見つかりません"
-    if user32.GetForegroundWindow() != hwnd:
-        if user32.IsIconic(hwnd):
-            user32.ShowWindow(hwnd, 9)  # SW_RESTORE
-        user32.SetForegroundWindow(hwnd)
-        # Windows may block foreground activation: verify rather than
-        # accidentally sending game commands to the current application.
-        for _ in range(12):
-            if user32.GetForegroundWindow() == hwnd:
-                break
-            time.sleep(0.05)
-    if user32.GetForegroundWindow() != hwnd:
-        return False, "Minecraftを前面にできませんでした。ウィンドウモードでお試しください"
-    return True, ""
 
 
 def load_settings():
@@ -111,7 +56,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("510x610")
+        self.root.geometry("565x710")
         self.root.resizable(False, False)
         self.data = load_settings()
         self.hotkey_var = tk.StringVar(value=self.data["hotkey"])
@@ -121,6 +66,9 @@ class App:
         self.cooldown_var = tk.StringVar(value=str(self.data["cooldown_ms"]))
         self.only_var = tk.BooleanVar(value=self.data["minecraft_only"])
         self.focus_var = tk.BooleanVar(value=self.data["focus_minecraft"])
+        self.target_hwnd = None
+        self.window_choices = {}
+        self.window_var = tk.StringVar(value="ウィンドウを選択してください")
         self.volume_var = tk.DoubleVar(value=self.data["volume_gain"])
         self.status = tk.StringVar(value="停止中")
         self.enabled = False
@@ -131,6 +79,7 @@ class App:
         self.closing = False
         self.creating_pack = False
         self.draw()
+        self.refresh_windows()
         self.root.after(100, self.poll)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
@@ -156,10 +105,18 @@ class App:
             row.pack(fill="x", pady=4)
             ttk.Label(row, text=caption, width=18).pack(side="left")
             ttk.Entry(row, textvariable=var, width=12).pack(side="left")
-        ttk.Checkbutton(box, text="Minecraftが前面にある場合だけ実行する（推奨）",
-                        variable=self.only_var).pack(anchor="w", pady=12)
-        ttk.Checkbutton(box, text="別の画面からMinecraftへ切り替えて操作する",
-                        variable=self.focus_var).pack(anchor="w", pady=(0, 8))
+        ttk.Label(box, text="操作するゲーム画面（別モニターからでも選択可能）").pack(anchor="w", pady=(10, 3))
+        target_row = ttk.Frame(box)
+        target_row.pack(fill="x")
+        self.window_combo = ttk.Combobox(target_row, textvariable=self.window_var,
+                                         state="readonly", width=47)
+        self.window_combo.pack(side="left", fill="x", expand=True)
+        self.window_combo.bind("<<ComboboxSelected>>", self.select_window)
+        ttk.Button(target_row, text="再検索", command=self.refresh_windows).pack(side="left", padx=(6, 0))
+        ttk.Checkbutton(box, text="F8で選択したウィンドウに切り替えてから操作する",
+                        variable=self.focus_var).pack(anchor="w", pady=(9, 4))
+        ttk.Label(box, text="対象を選択すると、ほかのアプリへの誤入力を防止します。",
+                  foreground="#666666").pack(anchor="w")
         ttk.Label(box, text="注意：Escでメニューが開く場合は右クリックのみを選択。",
                   foreground="#8a5200").pack(anchor="w")
         self.button = ttk.Button(box, text="保存して開始", command=self.toggle)
@@ -182,6 +139,35 @@ class App:
         self.pack_button.pack(fill="x")
         self.pack_status = tk.StringVar(value="作成待機中")
         ttk.Label(box, textvariable=self.pack_status).pack(anchor="w", pady=(6, 0))
+
+    def refresh_windows(self):
+        windows = [(hwnd, title) for hwnd, title in list_windows()
+                   if hwnd != self.root.winfo_id()]
+        choices = {}
+        for hwnd, title in windows:
+            label = f"{title[:56]}  [ID:{hwnd}]"
+            choices[label] = hwnd
+        self.window_choices = choices
+        self.window_combo.configure(values=list(choices))
+        if self.target_hwnd in choices.values():
+            selected = next(label for label, hwnd in choices.items()
+                            if hwnd == self.target_hwnd)
+            self.window_var.set(selected)
+        else:
+            self.target_hwnd = default_minecraft_window(windows)
+            if self.target_hwnd:
+                selected = next(label for label, hwnd in choices.items()
+                                if hwnd == self.target_hwnd)
+                self.window_var.set(selected)
+            else:
+                self.window_var.set("操作対象を選択してください")
+        if self.target_hwnd:
+            self.status.set("操作対象：" + window_title(self.target_hwnd)[:55])
+
+    def select_window(self, event=None):
+        self.target_hwnd = self.window_choices.get(self.window_var.get())
+        if self.target_hwnd:
+            self.status.set("操作対象：" + window_title(self.target_hwnd)[:55])
 
     def on_gain_change(self, value):
         gain = round(float(value), 1)
@@ -249,14 +235,20 @@ class App:
             return
         try:
             new = self.validated()
+            new["volume_gain"] = round(self.volume_var.get(), 1)
             config_path().write_text(json.dumps(new, ensure_ascii=False, indent=2),
                                      encoding="utf-8")
-            new["volume_gain"] = round(self.volume_var.get(), 1)
             self.data = new
             self.hook = keyboard.add_hotkey(new["hotkey"], self.on_hotkey,
                                              suppress=False, trigger_on_release=False)
         except (OSError, ValueError, KeyError) as exc:
             messagebox.showerror("開始できません", str(exc))
+            return
+        if not self.target_hwnd or not window_title(self.target_hwnd):
+            if self.hook is not None:
+                keyboard.remove_hotkey(self.hook)
+                self.hook = None
+            messagebox.showwarning("操作対象が未選択", "「再検索」でMinecraftのゲーム画面を選んでください。")
             return
         self.enabled = True
         self.button.configure(text="停止")
@@ -275,15 +267,18 @@ class App:
     def execute(self):
         try:
             settings = self.data.copy()
+            hwnd = self.target_hwnd
+            if not hwnd or not window_title(hwnd):
+                self.events.put("操作対象が見つかりません。ゲーム画面を再選択してください")
+                return
             if settings["focus_minecraft"]:
-                ok, reason = activate_minecraft()
+                ok, reason = activate_window(hwnd)
                 if not ok:
                     self.events.put(reason)
                     return
-                # Allow the game to process focus before sending input.
-                time.sleep(max(0.12, settings["delay_ms"] / 1000))
-            elif settings["minecraft_only"] and not minecraft_active():
-                self.events.put("Minecraftが前面ではないため操作しませんでした")
+                time.sleep(max(0.18, settings["delay_ms"] / 1000))
+            elif not is_foreground(hwnd):
+                self.events.put("操作対象が前面ではありません。画面切替をオンにしてください")
                 return
             actions = {
                 "click": [],
@@ -291,16 +286,16 @@ class App:
                 "esc_esc_click": ["esc", "esc"],
             }[settings["mode"]]
             for key in actions:
-                if not self.enabled:
-                    return
-                if (settings["focus_minecraft"] or settings["minecraft_only"]) and not minecraft_active():
-                    self.events.put("Minecraftからフォーカスが外れたため中断しました")
+                if not self.enabled or not is_foreground(hwnd):
+                    self.events.put("対象ウィンドウからフォーカスが外れたため中断しました")
                     return
                 pyautogui.press(key)
                 time.sleep(settings["delay_ms"] / 1000)
-            if self.enabled and (not (settings["focus_minecraft"] or settings["minecraft_only"]) or minecraft_active()):
+            if self.enabled and is_foreground(hwnd):
                 pyautogui.click(button="right")
-                self.events.put("操作を1回実行しました")
+                self.events.put("選択したウィンドウで操作を1回実行しました")
+            else:
+                self.events.put("対象ウィンドウからフォーカスが外れたため中断しました")
         except Exception as exc:
             self.events.put(f"操作に失敗：{exc}")
         finally:
