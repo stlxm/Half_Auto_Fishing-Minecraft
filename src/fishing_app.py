@@ -64,7 +64,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("625x930")
+        self.root.geometry("645x820")
         self.root.resizable(True, True)
         self.data = load_settings()
         self.hotkey_var = tk.StringVar(value=self.data["hotkey"])
@@ -107,8 +107,26 @@ class App:
         self.root.protocol("WM_DELETE_WINDOW", self.close)
 
     def draw(self):
-        box = ttk.Frame(self.root, padding=18)
-        box.pack(fill="both", expand=True)
+        # A fixed-height window clipped the entire meter on 100%-plus DPI screens.
+        # Make ALL controls scrollable; keep window width in sync with the canvas.
+        outer = ttk.Frame(self.root)
+        outer.pack(fill="both", expand=True)
+        canvas = tk.Canvas(outer, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(outer, orient="vertical", command=canvas.yview)
+        canvas.configure(yscrollcommand=scrollbar.set)
+        scrollbar.pack(side="right", fill="y")
+        canvas.pack(side="left", fill="both", expand=True)
+        box = ttk.Frame(canvas, padding=18)
+        inner = canvas.create_window((0, 0), window=box, anchor="nw")
+        box.bind("<Configure>", lambda event: canvas.configure(
+            scrollregion=canvas.bbox("all")))
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(
+            inner, width=event.width))
+        # Mouse wheel acts only while pointer is over this application's content.
+        canvas.bind("<Enter>", lambda event: canvas.bind_all(
+            "<MouseWheel>", lambda wheel: canvas.yview_scroll(
+                -int(wheel.delta / 120), "units")))
+        canvas.bind("<Leave>", lambda event: canvas.unbind_all("<MouseWheel>"))
         ttk.Label(box, text=APP_NAME, font=("Yu Gothic UI", 16, "bold")).pack(anchor="w")
         ttk.Label(box, text="手動キーまたは任意で開始する音声監視で1回操作します。").pack(
             anchor="w", pady=(4, 14))
@@ -189,10 +207,8 @@ class App:
         ttk.Label(box, textvariable=self.audio_label).pack(anchor="w", pady=(3, 2))
         ttk.Button(box, text="検出するMP3・WAV・OGGを選択",
                    command=self.choose_detection_sound).pack(fill="x")
-        self.auto_button = ttk.Button(box, text="自動検出を開始", command=self.toggle_auto)
-        self.auto_button.pack(fill="x", pady=(6, 2))
-        self.auto_status = tk.StringVar(value="音声監視は停止中")
-        ttk.Label(box, textvariable=self.auto_status, wraplength=570).pack(anchor="w")
+        # Keep the live meter ABOVE the start/stop control so it remains visible
+        # even when the bottom of the window is off-screen.
         meter_box = ttk.Frame(box)
         meter_box.pack(fill="x", pady=(7, 0))
         self.meter_text = tk.StringVar(value="現在のMinecraft音量：-- dBFS")
@@ -209,6 +225,10 @@ class App:
         ttk.Label(meter_box, textvariable=self.meter_state, wraplength=560).pack(anchor="w")
         ttk.Label(meter_box, text="青：基準未満／橙：基準以上／緑：自動トリガーを受信",
                   foreground="#555555").pack(anchor="w")
+        self.auto_button = ttk.Button(box, text="自動検出を開始", command=self.toggle_auto)
+        self.auto_button.pack(fill="x", pady=(8, 2))
+        self.auto_status = tk.StringVar(value="音声監視は停止中")
+        ttk.Label(box, textvariable=self.auto_status, wraplength=570).pack(anchor="w")
 
     def schedule_menu_calibration(self):
         if not self.target_hwnd:
