@@ -33,7 +33,6 @@ def convert_to_ogg(source: str, destination: str, gain: float = 1.0) -> None:
         if output_path.exists():
             output_path.unlink()
         raise RuntimeError(
-            "OGGへの変換に失敗しました。
-" +
+            "OGGへの変換に失敗しました。\n" +
             (result.stderr.strip()[-900:] or "音声ファイルを確認してください。")
         )
