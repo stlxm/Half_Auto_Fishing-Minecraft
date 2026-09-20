@@ -39,6 +39,21 @@ class SoundDetectorTests(unittest.TestCase):
         self.assertEqual(downsampled.shape, (SAMPLE_RATE,))
         self.assertGreater(float(np.sqrt(np.mean(downsampled ** 2))), 0.3)
 
+    def test_speed_pitch_changed_and_background_audio(self):
+        # Minecraft commonly changes the playback rate, which changes both
+        # pitch and duration. The signal is also mixed with OTHER game sounds.
+        source = self.sample()
+        templates = make_templates(source)
+        for numerator, denominator in ((4, 5), (5, 4)):
+            changed = resample_poly(source, numerator, denominator).astype(np.float32)
+            t = np.arange(changed.size, dtype=np.float32) / SAMPLE_RATE
+            game_ambience = (0.012 * np.sin(2 * np.pi * 270 * t)).astype(np.float32)
+            captured = np.concatenate((np.zeros(9000, dtype=np.float32),
+                                       changed + game_ambience,
+                                       np.zeros(11000, dtype=np.float32)))
+            score = match_score(captured, templates)
+            self.assertGreater(score, 0.48, (numerator, denominator, score))
+
     def test_low_amplitude_and_silence_do_not_trigger(self):
         templates = make_templates(self.sample())
         self.assertEqual(match_score(np.zeros(SAMPLE_RATE, np.float32), templates), 0.0)
