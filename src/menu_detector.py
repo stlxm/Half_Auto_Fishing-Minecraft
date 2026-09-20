@@ -4,8 +4,7 @@ Only the interior of the top-center 'Back to Game' button is compared;
 the moving blurred world behind the pause menu is deliberately excluded.
 """
 import numpy as np
-import pyautogui
-from PIL import Image
+from PIL import ImageGrab
 
 from window_control import client_bounds
 
@@ -25,7 +24,7 @@ def menu_crop(image):
 
 def capture_game_region(hwnd):
     x, y, width, height = client_bounds(hwnd)
-    return pyautogui.screenshot(region=(x, y, width, height))
+    return ImageGrab.grab(bbox=(x, y, x + width, y + height), all_screens=True)
 
 
 def calibrate_pause_menu(hwnd):
