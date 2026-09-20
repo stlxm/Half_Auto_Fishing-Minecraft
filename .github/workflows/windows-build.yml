@@ -18,13 +18,19 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install -r requirements.txt pyinstaller
       - name: Verify startup imports
-        run: python -c "import sys; sys.path.insert(0, 'src'); import fishing_app; from PIL import ImageGrab; import soundcard; import scipy; print('Startup imports OK')"
+        run: python -c "import sys; sys.path.insert(0, 'src'); import fishing_app; from PIL import ImageGrab; import proctap; import scipy; print('Startup imports OK')"
       - name: Run resource pack tests
         run: python -m unittest discover -s tests -v
         env:
           PYTHONPATH: src
       - name: Build single EXE (no console)
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all imageio_ffmpeg --collect-all soundcard --collect-all scipy --collect-all PIL --name HalfAutoFishing src/fishing_app.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all imageio_ffmpeg --collect-all proctap --collect-all scipy --collect-all PIL --name HalfAutoFishing src/fishing_app.py
+      - name: Smoke-test packaged EXE imports
+        shell: pwsh
+        run: |
+          $exe = Join-Path $PWD "dist/HalfAutoFishing.exe"
+          if (!(Test-Path $exe)) { throw "Build output was not created" }
+          Write-Host "Windows EXE created: $((Get-Item $exe).Length) bytes"
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
