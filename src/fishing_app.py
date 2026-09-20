@@ -28,7 +28,8 @@ MODES = {
 }
 
 DEFAULT = {"hotkey": "f8", "mode": "click", "delay_ms": 120, "cooldown_ms": 500,
-           "minecraft_only": True, "focus_minecraft": True, "volume_gain": 3.0}
+           "minecraft_only": True, "focus_minecraft": True, "volume_gain": 5.0,
+           "detect_mode": "signature", "volume_threshold_db": -21.0}
 pyautogui.PAUSE = 0
 
 
@@ -51,6 +52,9 @@ def load_settings():
         data["minecraft_only"] = bool(data["minecraft_only"])
         data["focus_minecraft"] = bool(data["focus_minecraft"])
         data["volume_gain"] = max(1.0, min(5.0, round(float(data["volume_gain"]), 1)))
+        if data.get("detect_mode") not in ("signature", "volume"):
+            data["detect_mode"] = "signature"
+        data["volume_threshold_db"] = max(-60.0, min(-3.0, float(data["volume_threshold_db"])))
         return data
     except (OSError, ValueError, TypeError, KeyError):
         return DEFAULT.copy()
@@ -89,6 +93,8 @@ class App:
         self.creating_pack = False
         self.pause_template = None
         self.audio_path = self.data.get("detect_audio_path", "")
+        self.detect_mode_var = tk.StringVar(value=self.data["detect_mode"])
+        self.threshold_var = tk.StringVar(value=str(self.data["volume_threshold_db"]))
         self.audio_stop = threading.Event()
         self.auto_running = False
         self.auto_thread = None
@@ -162,7 +168,20 @@ class App:
         ttk.Separator(box, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(box, text="効果音による自動操作（初期状態：オフ）",
                   font=("Yu Gothic UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(box, text="選択したMinecraftの音声だけを検出（YouTubeを除外）。").pack(anchor="w")
+        ttk.Label(box, text="Minecraftの音声のみを監視（YouTube音声は対象外）。").pack(anchor="w")
+        detector_row = ttk.Frame(box)
+        detector_row.pack(fill="x", pady=(5, 3))
+        ttk.Label(detector_row, text="検出方式").pack(side="left")
+        ttk.Radiobutton(detector_row, text="効果音の類似度", variable=self.detect_mode_var,
+                        value="signature").pack(side="left", padx=8)
+        ttk.Radiobutton(detector_row, text="音量しきい値", variable=self.detect_mode_var,
+                        value="volume").pack(side="left", padx=8)
+        threshold_row = ttk.Frame(box)
+        threshold_row.pack(fill="x", pady=(0, 4))
+        ttk.Label(threshold_row, text="音量検出の基準（-60～-3 dBFS）").pack(side="left")
+        ttk.Entry(threshold_row, textvariable=self.threshold_var, width=7).pack(side="left", padx=5)
+        ttk.Label(box, text="例：-21。-30にすると小さな音でも反応しやすくなります。",
+                  foreground="#666666").pack(anchor="w")
         self.audio_label = tk.StringVar(value=Path(self.audio_path).name if self.audio_path else "検出音は未選択")
         ttk.Label(box, textvariable=self.audio_label).pack(anchor="w", pady=(3, 2))
         ttk.Button(box, text="検出するMP3・WAV・OGGを選択",
@@ -222,8 +241,19 @@ class App:
         if not self.target_hwnd or not window_title(self.target_hwnd):
             messagebox.showwarning("ゲーム画面未選択", "Minecraftのウィンドウを選択してください。")
             return
-        if not self.audio_path or not Path(self.audio_path).is_file():
+        detect_mode = self.detect_mode_var.get()
+        if detect_mode not in ("signature", "volume"):
+            messagebox.showwarning("検出方式未選択", "検出方式を選択してください。")
+            return
+        if detect_mode == "signature" and (not self.audio_path or not Path(self.audio_path).is_file()):
             messagebox.showwarning("検出音未選択", "リソースパックで使った音声を選択してください。")
+            return
+        try:
+            threshold_db = float(self.threshold_var.get())
+            if not -60.0 <= threshold_db <= -3.0:
+                raise ValueError()
+        except ValueError:
+            messagebox.showwarning("音量基準が不正", "音量基準は -60～-3 の数値で入力してください。")
             return
         if self.mode_var.get() not in MODES:
             messagebox.showwarning("操作未設定", "操作内容を選択してください。")
@@ -244,6 +274,16 @@ class App:
         except ValueError as exc:
             messagebox.showerror("自動検出を開始できません", str(exc))
             return
+        self.data["detect_mode"] = detect_mode
+        self.data["volume_threshold_db"] = threshold_db
+        self.data["detect_audio_path"] = self.audio_path
+        self.data["volume_gain"] = round(self.volume_var.get(), 1)
+        try:
+            config_path().write_text(json.dumps(self.data, ensure_ascii=False, indent=2),
+                                     encoding="utf-8")
+        except OSError as exc:
+            messagebox.showerror("設定保存エラー", str(exc))
+            return
         self.target_pid = window_pid(self.target_hwnd)
         if self.target_pid <= 0:
             messagebox.showwarning("対象不明", "Minecraftのウィンドウを再選択してください。")
@@ -255,15 +295,17 @@ class App:
         selected_pid = self.target_pid
         self.auto_thread = threading.Thread(
             target=self.auto_worker,
-            args=(self.audio_path, selected_pid, self.audio_stop), daemon=True
+            args=(self.audio_path, selected_pid, self.audio_stop, detect_mode, threshold_db),
+            daemon=True
         )
         self.auto_thread.start()
 
-    def auto_worker(self, path, selected_pid, stop_event):
+    def auto_worker(self, path, selected_pid, stop_event, detect_mode, threshold_db):
         try:
             monitor_sound(path, selected_pid, stop_event,
                           lambda: self.on_auto_match(stop_event),
-                          lambda msg: self.events.put(("audio_status", (stop_event, msg))))
+                          lambda msg: self.events.put(("audio_status", (stop_event, msg))),
+                          detect_mode=detect_mode, volume_threshold_db=threshold_db)
         except Exception as exc:
             self.events.put(("audio_error", (stop_event, str(exc))))
         finally:
@@ -441,6 +483,8 @@ class App:
                 raise ValueError("登録できないキーです。F8 または ctrl+shift+f9 のように指定してください。") from exc
             new["volume_gain"] = round(self.volume_var.get(), 1)
             new["detect_audio_path"] = self.audio_path
+            new["detect_mode"] = self.detect_mode_var.get()
+            new["volume_threshold_db"] = self.data["volume_threshold_db"]
             config_path().write_text(json.dumps(new, ensure_ascii=False, indent=2),
                                      encoding="utf-8")
             self.data = new
