@@ -62,6 +62,34 @@ class ResourcePackTests(unittest.TestCase):
             self.assertTrue(result.startswith(b"OggS"))
             self.assertNotEqual(result, before)
 
+    def test_stages_zip_in_destination_directory(self):
+        # Regression: Windows os.replace raises WinError 17 across drives.
+        from unittest.mock import patch
+        from resource_pack import convert_to_ogg
+
+        with TemporaryDirectory() as folder:
+            source = Path(folder) / "input.ogg"
+            source.write_bytes(b"OggS" + b"test-audio")
+            output_dir = Path(folder) / "different_destination"
+            output_dir.mkdir()
+            result = output_dir / "Fishing_SE_Custom_26_2.zip"
+            original_replace = __import__("os").replace
+
+            def require_same_parent(source_path, target_path):
+                self.assertEqual(Path(source_path).parent, Path(target_path).parent)
+                return original_replace(source_path, target_path)
+
+            def write_test_ogg(_source, destination, gain=3.0):
+                Path(destination).write_bytes(b"OggS" + b"encoded-audio")
+
+            with patch("resource_pack.convert_to_ogg", side_effect=write_test_ogg):
+                with patch("resource_pack.os.replace", side_effect=require_same_parent):
+                    create_resource_pack(str(source), str(result), gain=2.0)
+
+            with zipfile.ZipFile(result) as pack:
+                self.assertEqual(pack.read(SOUND_ENTRY), b"OggS" + b"encoded-audio")
+            self.assertEqual(list(output_dir.iterdir()), [result])
+
     def test_rejects_non_ogg_data_in_ogg_file(self):
         with TemporaryDirectory() as folder:
             fake = Path(folder) / "fake.ogg"
