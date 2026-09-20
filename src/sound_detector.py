@@ -187,6 +187,7 @@ def monitor_sound(path, target_pid, should_stop, on_match, on_status,
     buffer = np.empty(0, dtype=np.float32)
     last_match = 0.0
     last_status = 0.0
+    last_level_emit = 0.0
     tap = ProcessAudioCapture(pid=target_pid)
     try:
         tap.start()
@@ -203,8 +204,9 @@ def monitor_sound(path, target_pid, should_stop, on_match, on_status,
             # Report actual game-process loudness irrespective of detection mode.
             # Forward the same reading used by the volume trigger to the GUI.
             level = rms_dbfs(mono[-int(0.08 * SAMPLE_RATE):])
-            if on_level is not None:
+            if on_level is not None and now - last_level_emit >= 0.09:
                 on_level(level, volume_threshold_db, detect_mode)
+                last_level_emit = now
             if detect_mode == "volume":
                 # 80 ms of game-process PCM; use exactly the GUI's reading.
                 triggered = level_trigger.update(level, now)
