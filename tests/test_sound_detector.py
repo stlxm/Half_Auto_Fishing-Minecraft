@@ -5,7 +5,8 @@ import numpy as np
 from scipy.signal import chirp, resample_poly
 
 from sound_detector import (HOP, PITCHES, SAMPLE_RATE, TEMPOS, fingerprint,
-                            make_templates, match_score, convert_process_pcm)
+                            make_templates, match_score, convert_process_pcm,
+                            rms_dbfs, LoudnessTrigger)
 
 
 class SoundDetectorTests(unittest.TestCase):
@@ -53,6 +54,23 @@ class SoundDetectorTests(unittest.TestCase):
                                        np.zeros(11000, dtype=np.float32)))
             score = match_score(captured, templates)
             self.assertGreater(score, 0.48, (numerator, denominator, score))
+
+    def test_volume_dbfs_and_trigger_hysteresis(self):
+        self.assertLess(rms_dbfs(np.zeros(1000, dtype=np.float32)), -100)
+        self.assertAlmostEqual(rms_dbfs(np.full(1000, 0.1, dtype=np.float32)), -20.0, places=2)
+        detector = LoudnessTrigger(threshold_db=-21)
+        self.assertFalse(detector.update(-30, 1.0))
+        self.assertTrue(detector.update(-18, 1.1))
+        self.assertFalse(detector.update(-15, 1.2))
+        self.assertFalse(detector.update(-40, 1.3))
+        self.assertFalse(detector.update(-40, 1.6))
+        self.assertTrue(detector.update(-18, 1.7))
+
+    def test_quiet_audio_does_not_cross_threshold(self):
+        detector = LoudnessTrigger(threshold_db=-21)
+        for index in range(30):
+            self.assertFalse(detector.update(rms_dbfs(
+                np.full(320, 0.01, dtype=np.float32)), index / 10))
 
     def test_low_amplitude_and_silence_do_not_trigger(self):
         templates = make_templates(self.sample())
