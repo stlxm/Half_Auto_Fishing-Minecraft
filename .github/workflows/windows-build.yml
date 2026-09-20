@@ -22,7 +22,7 @@ jobs:
         env:
           PYTHONPATH: src
       - name: Build single EXE (no console)
-        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all imageio_ffmpeg --name HalfAutoFishing src/fishing_app.py
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all imageio_ffmpeg --collect-all soundcard --collect-all scipy --name HalfAutoFishing src/fishing_app.py
       - name: Upload EXE
         uses: actions/upload-artifact@v4
         with:
