@@ -33,6 +33,10 @@ def create_resource_pack(source: str, destination: str) -> None:
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
         ogg_file = Path(directory) / "fishing_alert.ogg"
+        if source_path.suffix.lower() == ".ogg":
+            with source_path.open("rb") as audio:
+                if audio.read(4) != b"OggS":
+                    raise ValueError("OGG音声として読み込めません。")
         # Re-encode OGG inputs too, so every supported input receives the same
         # threefold gain and peak limiting; the original file is never changed.
         convert_to_ogg(str(source_path), str(ogg_file), gain=3.0)
