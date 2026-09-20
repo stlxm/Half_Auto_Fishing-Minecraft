@@ -127,6 +127,28 @@ def activate_window(hwnd):
         time.sleep(0.05)
     return False, "Windowsが画面の切り替えを許可しませんでした。ウィンドウモードでお試しください。"
 
+def window_pid(hwnd):
+    if not hwnd or not user32.IsWindow(hwnd):
+        return 0
+    process_id = wintypes.DWORD()
+    user32.GetWindowThreadProcessId(hwnd, ctypes.byref(process_id))
+    return int(process_id.value)
+
+
+def restore_same_process_window(hwnd, expected_pid):
+    """Reacquire only a unique visible window from the original game process."""
+    if hwnd and window_pid(hwnd) == expected_pid and window_title(hwnd):
+        return hwnd, ""
+    if not expected_pid:
+        return None, "ゲームのウィンドウを再検索して選択してください。"
+    candidates = [candidate for candidate, title in list_windows()
+                  if candidate != hwnd and window_pid(candidate) == expected_pid
+                  and "launcher" not in title.casefold()]
+    if len(candidates) == 1:
+        return candidates[0], "ゲーム画面を再検出しました"
+    return None, "ゲーム画面が変わりました。再検索して正しい画面を選択してください。"
+
+
 def client_center(hwnd):
     """Return a screen point inside the selected game (even on monitor 2)."""
     rect = wintypes.RECT()
