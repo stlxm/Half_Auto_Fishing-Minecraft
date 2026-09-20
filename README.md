@@ -32,18 +32,23 @@ Minecraft Java版で釣りのヒット音を**自分で聞き、操作キーを�
 - Minecraftのウィンドウモード／ボーダーレスで先に確認してください。全画面時や権限の異なるアプリの前面化は環境によって成功しない場合があります。
 - **Esc → 右クリック** を選んでも、Escでゲームメニューが開いた場合は釣り竿の操作にはなりません。その場合は「右クリックのみ」、または必要に応じて「Esc → Esc → 右クリック」を試してください。
 
-## 3. 釣りSE変更リソースパック（Minecraft Java版26.2）
+## 3. 好きなSE入りのリソースパックをアプリで作成する
 
-GitHub内の [釣りSE変更パック ZIP テンプレート](resourcepack/Fishing_SE_26_2_Template.zip) をダウンロードできます（GitHubのファイル画面で **Download raw file** を押してください）。
+**ZIPへの手動追加は不要です。** 新しいEXEの「音声を選んでリソースパックを作成」ボタンから、MP3・WAV・OGGを選ぶだけでMinecraft Java版26.2向けの完成版リソースパックが作れます。
 
-**重要：GitHub版ZIPはご自身の効果音を入れるためのテンプレートで、音声ファイルは未同梱です。音声を入れない状態では釣りのSEは鳴りません。**
+1. 最新のビルド済み `HalfAutoFishing.exe` を起動し、「音声を選んでリソースパックを作成」を押します。
+2. 好きなMP3・WAV・OGG音声ファイルを指定します（MP3/WAVは内部でOGG Vorbisに変換します）。
+3. ZIPの保存先を選びます。初期ファイル名は `Fishing_SE_Custom_26_2.zip` です。変換中はしばらく操作せず、完成通知を確認します。
+4. Windowsキー + R → `%APPDATA%\\.minecraft\\resourcepacks` を開き、生成されたZIPをそのまま入れます。**ZIPを展開したり、中に音声を追加したりする必要はありません。**
+5. Minecraftの「設定 → リソースパック」で有効化します。反映されない場合はF3+Tで再読み込みします。非標準のゲームディレクトリを使用している場合はそのディレクトリ内の `resourcepacks` を使います。
 
-1. 任意の音声を **OGG Vorbis形式** に変換し、`fishing_alert.ogg` というファイル名にします。拡張子だけ変更しても変換にはなりません。
-2. ZIPを開き、`assets/minecraft/sounds/custom/` に `fishing_alert.ogg` を追加します。元のフォルダ階層を維持してください。
-3. Windowsキー + R → `%APPDATA%\\.minecraft\\resourcepacks` を開き、音声を追加したZIPをコピーします。
-4. Minecraftの「設定 → リソースパック」で有効にします。反映されない場合はF3+Tで再読み込みします。
+作成したZIPには `pack.mcmeta`、`assets/minecraft/sounds.json`、`assets/minecraft/sounds/custom/fishing_alert.ogg` が含まれます。変換処理はPC内で完結し、元のMP3/WAVは変更しません。変換用FFmpegはEXEに同梱するため別途インストール不要です。保存先に同名のZIPがある場合は上書きされるため、必要なファイルは別名で保存してください。
 
-釣りの水しぶき音 `entity.fishing_bobber.splash` を置き換えます。**魚がかかった時だけでなく、着水時にも鳴る場合があります。** 正確なヒット検出は行いません。対象ゲームバージョンでパック形式が変更された際には適宜更新が必要です。
+釣りの水しぶき音 `entity.fishing_bobber.splash` を置き換えます。**魚がかかったときだけでなく、ウキの着水時にも鳴る場合があります。** このアプリはヒットを自動検出しません。音量はMinecraftやPC側の設定、または元音声の音量で調整してください。
+
+### 既存の空テンプレートZIPについて
+
+GitHubの [釣りSE変更パック ZIP テンプレート](resourcepack/Fishing_SE_26_2_Template.zip) は手動で音声を追加する旧方式です。**新しいEXEで完成版ZIPを生成する場合はテンプレートのダウンロードも編集も必要ありません。**
 
 ## 4. ソースから動かす・EXEを自作する
 
@@ -58,7 +63,7 @@ EXEをローカルで作る場合：
 
 ```powershell
 py -m pip install -r requirements.txt pyinstaller
-py -m PyInstaller --noconfirm --clean --onefile --windowed --name HalfAutoFishing src/fishing_app.py
+py -m PyInstaller --noconfirm --clean --onefile --windowed --collect-all imageio_ffmpeg --name HalfAutoFishing src/fishing_app.py
 ```
 
 完成品は `dist/HalfAutoFishing.exe` です。GitHubの **Actions → Windows EXE build → Run workflow** からもビルドできます。push時にも自動ビルドします。
@@ -69,7 +74,7 @@ py -m PyInstaller --noconfirm --clean --onefile --windowed --name HalfAutoFishin
 - **Escでメニューが開く：** 「右クリックのみ」に戻す。メニューが開いていると釣り竿を操作できません。
 - **キーが連続で反応しない：** 連続実行防止時間が経過してから押す。
 - **設定を初期化したい：** アプリを終了し、`%APPDATA%\HalfAutoFishing\config.json` を削除して再起動する。
-- **EXEが見つからない：** Actionsのビルドが成功しているか確認する。成果物はリポジトリのソース一覧ではなく実行履歴のArtifacts内にあります。
+- **音声の変換に失敗する：** ファイルがMP3/WAV/OGGか確認する。壊れた音声や音声トラックがないファイルには対応していません。保存先の権限や空き容量も確認してください。\n- **ZIPを導入しても音が変わらない：** 作成したZIPをresourcepacks直下に置き、有効化する。別のリソースパックで同じサウンドが上書きされていないか確認してください。\n- **EXEが見つからない：** Actionsのビルドが成功しているか確認する。成果物はリポジトリのソース一覧ではなく実行履歴のArtifacts内にあります。
 - **動作時にエラーが出る：** Python版をコマンドプロンプトから実行し、表示されるエラーを確認してください。
 
 ## 6. 更新・保守
