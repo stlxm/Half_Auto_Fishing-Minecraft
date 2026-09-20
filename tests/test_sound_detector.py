@@ -4,7 +4,8 @@ import unittest
 import numpy as np
 from scipy.signal import chirp, resample_poly
 
-from sound_detector import HOP, PITCHES, SAMPLE_RATE, TEMPOS, fingerprint, make_templates, match_score
+from sound_detector import (HOP, PITCHES, SAMPLE_RATE, TEMPOS, fingerprint,
+                            make_templates, match_score, convert_process_pcm)
 
 
 class SoundDetectorTests(unittest.TestCase):
@@ -29,6 +30,14 @@ class SoundDetectorTests(unittest.TestCase):
         self.assertEqual(len(templates), len(TEMPOS) * len(PITCHES))
         lengths = {matrix.shape[1] for matrix, _ in templates}
         self.assertGreater(len(lengths), 3)
+
+    def test_proc_tap_stereo_pcm_downsamples_without_other_sources(self):
+        t = np.arange(48000, dtype=np.float32) / 48000
+        minecraft = np.sin(2 * np.pi * 440 * t).astype(np.float32)
+        pcm = np.column_stack((minecraft, minecraft)).astype("<f4").tobytes()
+        downsampled = convert_process_pcm(pcm)
+        self.assertEqual(downsampled.shape, (SAMPLE_RATE,))
+        self.assertGreater(float(np.sqrt(np.mean(downsampled ** 2))), 0.3)
 
     def test_low_amplitude_and_silence_do_not_trigger(self):
         templates = make_templates(self.sample())
