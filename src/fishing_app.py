@@ -7,7 +7,9 @@ import threading
 import time
 import tkinter as tk
 from pathlib import Path
-from tkinter import messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
+
+from resource_pack import create_resource_pack
 
 import keyboard
 import pyautogui
@@ -108,7 +110,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("510x450")
+        self.root.geometry("510x545")
         self.root.resizable(False, False)
         self.data = load_settings()
         self.hotkey_var = tk.StringVar(value=self.data["hotkey"])
@@ -125,6 +127,7 @@ class App:
         self.last_start = 0.0
         self.events = queue.Queue()
         self.closing = False
+        self.creating_pack = False
         self.draw()
         self.root.after(100, self.poll)
         self.root.protocol("WM_DELETE_WINDOW", self.close)
@@ -162,6 +165,46 @@ class App:
         ttk.Label(box, textvariable=self.status).pack(anchor="w")
         ttk.Label(box, text="設定保存先：%APPDATA%\\HalfAutoFishing\\config.json",
                   foreground="#666666").pack(anchor="w", pady=(12, 0))
+
+        ttk.Separator(box, orient="horizontal").pack(fill="x", pady=14)
+        ttk.Label(box, text="釣りSEリソースパック作成", font=("Yu Gothic UI", 11, "bold")).pack(anchor="w")
+        ttk.Label(box, text="MP3・WAV・OGGから導入用ZIPを作ります。").pack(anchor="w", pady=(3, 6))
+        self.pack_button = ttk.Button(box, text="音声を選んでリソースパックを作成", command=self.choose_pack_audio)
+        self.pack_button.pack(fill="x")
+        self.pack_status = tk.StringVar(value="作成待機中")
+        ttk.Label(box, textvariable=self.pack_status).pack(anchor="w", pady=(6, 0))
+
+    def choose_pack_audio(self):
+        if self.creating_pack:
+            return
+        source = filedialog.askopenfilename(
+            parent=self.root, title="釣りSEにする音声を選択",
+            filetypes=[("音声ファイル", "*.mp3 *.wav *.ogg"), ("すべてのファイル", "*.*")]
+        )
+        if not source:
+            return
+        target = filedialog.asksaveasfilename(
+            parent=self.root, title="リソースパックZIPの保存先",
+            initialdir=str(Path(source).parent),
+            initialfile="Fishing_SE_Custom_26_2.zip",
+            defaultextension=".zip", filetypes=[("ZIPファイル", "*.zip")]
+        )
+        if not target:
+            return
+        if Path(target).suffix.lower() != ".zip":
+            messagebox.showerror("保存できません", "保存先の拡張子は .zip にしてください。")
+            return
+        self.creating_pack = True
+        self.pack_button.configure(state="disabled")
+        self.pack_status.set("音声を変換してリソースパックを作成しています…")
+        threading.Thread(target=self.build_pack, args=(source, target), daemon=True).start()
+
+    def build_pack(self, source, target):
+        try:
+            create_resource_pack(source, target)
+            self.events.put(("pack_ready", target))
+        except Exception as exc:
+            self.events.put(("pack_error", str(exc)))
 
     def validated(self):
         try:
@@ -244,7 +287,22 @@ class App:
             return
         try:
             while True:
-                self.status.set(self.events.get_nowait())
+                event = self.events.get_nowait()
+                if isinstance(event, tuple):
+                    kind, detail = event
+                    self.creating_pack = False
+                    self.pack_button.configure(state="normal")
+                    if kind == "pack_ready":
+                        self.pack_status.set("作成完了：" + Path(detail).name)
+                        messagebox.showinfo(
+                            "リソースパック完成",
+                            "音声入りリソースパックを保存しました。\\n" + detail +
+                            "\\n\\nZIPのままMinecraftのresourcepacksに入れて有効にしてください。")
+                    else:
+                        self.pack_status.set("作成失敗")
+                        messagebox.showerror("リソースパック作成失敗", detail)
+                else:
+                    self.status.set(event)
         except queue.Empty:
             pass
         self.root.after(100, self.poll)
