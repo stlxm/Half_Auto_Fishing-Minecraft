@@ -395,7 +395,7 @@ class App:
     def build_pack(self, source, target, gain):
         try:
             create_resource_pack(source, target, gain=gain)
-            self.events.put(("pack_ready", target))
+            self.events.put(("pack_ready", (target, source)))
         except Exception as exc:
             self.events.put(("pack_error", str(exc)))
 
@@ -426,6 +426,7 @@ class App:
             except (ValueError, KeyError) as exc:
                 raise ValueError("登録できないキーです。F8 または ctrl+shift+f9 のように指定してください。") from exc
             new["volume_gain"] = round(self.volume_var.get(), 1)
+            new["detect_audio_path"] = self.audio_path
             config_path().write_text(json.dumps(new, ensure_ascii=False, indent=2),
                                      encoding="utf-8")
             self.data = new
@@ -469,11 +470,14 @@ class App:
         self.hotkey_count += 1
         count = self.hotkey_count
         self.events.put(f"操作キーを受信しました（{count}回目）")
+        self.queue_action("手動")
+
+    def queue_action(self, source):
         if not self.lock.acquire(blocking=False):
             self.events.put(f"操作キー受信（{count}回目）：前の操作を実行中")
             return
         now = time.monotonic()
-        if now - self.last_start < self.data["cooldown_ms"] / 1000:
+        if now - self.last_start < max(self.data["cooldown_ms"] / 1000, 4.0 if source == "音声" else 0.0):
             self.lock.release()
             self.events.put("連続実行防止中です。少し待って押してください")
             return
@@ -504,18 +508,27 @@ class App:
             elif not is_foreground(hwnd):
                 self.events.put("操作対象が前面ではありません。画面切替をオンにしてください")
                 return
-            actions = {
-                "click": [],
-                "esc_click": ["esc"],
-                "esc_esc_click": ["esc", "esc"],
-            }[settings["mode"]]
+            mode = settings["mode"]
+            if mode == "smart":
+                if self.pause_template is None:
+                    self.events.put("メニュー未登録：3秒後にポーズメニューを登録してください")
+                    return
+                paused = is_pause_menu(hwnd, self.pause_template)
+                self.events.put("ポーズメニューを検出" if paused else "通常画面を検出")
+                actions = ["esc"] if paused else []
+            else:
+                actions = {
+                    "click": [],
+                    "esc_click": ["esc"],
+                    "esc_esc_click": ["esc", "esc"],
+                }[mode]
             for key in actions:
-                if not self.enabled or not is_foreground(hwnd):
+                if not (self.enabled or self.auto_running) or not is_foreground(hwnd):
                     self.events.put("対象ウィンドウからフォーカスが外れたため中断しました")
                     return
                 pyautogui.press(key)
                 time.sleep(settings["delay_ms"] / 1000)
-            if self.enabled and is_foreground(hwnd):
+            if (self.enabled or self.auto_running) and is_foreground(hwnd):
                 x, y = client_center(hwnd)
                 pyautogui.click(x=x, y=y, button="right")
                 self.events.put("選択したウィンドウで操作を1回実行しました")
@@ -563,6 +576,7 @@ class App:
         self.status.set("停止中")
 
     def close(self):
+        self.stop_auto()
         if self.capturing:
             self.finish_capture(None)
         self.stop()
