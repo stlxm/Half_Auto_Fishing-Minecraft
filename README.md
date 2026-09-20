@@ -133,7 +133,7 @@ Pythonの標準機能である `tkinter`、`ctypes`、`json` などは通常pip�
 
 ### B. GitHub ActionsからダウンロードしたEXEで「No module named ...」が出る場合
 
-**EXEは必要なPythonライブラリを同梱する形式です。上のpipコマンドを実行しても、EXE内のモジュール不足は通常解決しません。** まず最新の成功済み [Windows EXE build](../../actions/workflows/windows-build.yml) のArtifactsから`HalfAutoFishing-Windows`を再ダウンロードし、ZIPを展開して**古いEXEを終了してから**入れ替えてください。以前のEXEを間違えて起動していないか、保存場所も確認してください。
+**EXEは必要なPythonライブラリを同梱する形式です。上のpipコマンドを実行しても、EXE内のモジュール不足は通常解決しません。** 以前のEXEで表示された `No module named 'PIL'` は、画像処理用Pillowの同梱漏れが原因でした。Pillowを依存関係に追加し、最新版のビルドで明示的に同梱するよう修正しています。 まず最新の成功済み [Windows EXE build](../../actions/workflows/windows-build.yml) のArtifactsから`HalfAutoFishing-Windows`を再ダウンロードし、ZIPを展開して**古いEXEを終了してから**入れ替えてください。以前のEXEを間違えて起動していないか、保存場所も確認してください。
 
 最新版EXEでも同じエラーが出るときは、エラーメッセージに表示された**モジュール名（`No module named '...' `）の全文と、実行履歴のリンク**を共有してください。EXEのビルド設定で同梱漏れや互換性の問題を調査する必要があります。DLL読み込みエラーやWindowsセキュリティ機能によるファイル隔離が原因の場合もあり、その際は正確なエラー文が必要です。出所が確認できないDLLを別サイトからダウンロードして配置することは避けてください。
 
