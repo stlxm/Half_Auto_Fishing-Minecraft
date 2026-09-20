@@ -11,7 +11,7 @@ from tkinter import filedialog, messagebox, ttk
 
 from resource_pack import create_resource_pack
 from window_control import (list_windows, default_minecraft_window,
-                            activate_window, is_foreground, window_title)
+                            activate_window, is_foreground, window_title, client_center)
 
 import keyboard
 import pyautogui
@@ -22,7 +22,7 @@ MODES = {
     "Esc → 右クリック": "esc_click",
     "Esc → Esc → 右クリック": "esc_esc_click",
 }
-KEYS = [f"f{i}" for i in range(6, 13)] + ["insert", "home", "end", "page up", "page down"]
+
 DEFAULT = {"hotkey": "f8", "mode": "click", "delay_ms": 120, "cooldown_ms": 500,
            "minecraft_only": True, "focus_minecraft": True, "volume_gain": 3.0}
 pyautogui.PAUSE = 0
@@ -40,7 +40,7 @@ def load_settings():
         if not isinstance(raw, dict):
             return DEFAULT.copy()
         data = {**DEFAULT, **raw}
-        if data["hotkey"] not in KEYS or data["mode"] not in MODES.values():
+        if not isinstance(data["hotkey"], str) or data["mode"] not in MODES.values():
             return DEFAULT.copy()
         data["delay_ms"] = max(0, min(2000, int(data["delay_ms"])))
         data["cooldown_ms"] = max(300, min(10000, int(data["cooldown_ms"])))
@@ -67,6 +67,9 @@ class App:
         self.only_var = tk.BooleanVar(value=self.data["minecraft_only"])
         self.focus_var = tk.BooleanVar(value=self.data["focus_minecraft"])
         self.target_hwnd = None
+        self.capture_hook = None
+        self.capturing = False
+        self.capture_keys = set()
         self.window_choices = {}
         self.window_var = tk.StringVar(value="ウィンドウを選択してください")
         self.volume_var = tk.DoubleVar(value=self.data["volume_gain"])
@@ -92,8 +95,9 @@ class App:
         row = ttk.Frame(box)
         row.pack(fill="x", pady=4)
         ttk.Label(row, text="操作キー", width=18).pack(side="left")
-        ttk.Combobox(row, textvariable=self.hotkey_var, values=KEYS,
-                     state="readonly", width=19).pack(side="left")
+        ttk.Entry(row, textvariable=self.hotkey_var, width=19).pack(side="left")
+        self.capture_button = ttk.Button(row, text="キーを登録", command=self.capture_hotkey)
+        self.capture_button.pack(side="left", padx=(8, 0))
         row = ttk.Frame(box)
         row.pack(fill="x", pady=4)
         ttk.Label(row, text="操作内容", width=18).pack(side="left")
@@ -113,7 +117,7 @@ class App:
         self.window_combo.pack(side="left", fill="x", expand=True)
         self.window_combo.bind("<<ComboboxSelected>>", self.select_window)
         ttk.Button(target_row, text="再検索", command=self.refresh_windows).pack(side="left", padx=(6, 0))
-        ttk.Checkbutton(box, text="F8で選択したウィンドウに切り替えてから操作する",
+        ttk.Checkbutton(box, text="操作キーで選択したウィンドウに切り替えてから操作する",
                         variable=self.focus_var).pack(anchor="w", pady=(9, 4))
         ttk.Label(box, text="対象を選択すると、ほかのアプリへの誤入力を防止します。",
                   foreground="#666666").pack(anchor="w")
@@ -139,6 +143,52 @@ class App:
         self.pack_button.pack(fill="x")
         self.pack_status = tk.StringVar(value="作成待機中")
         ttk.Label(box, textvariable=self.pack_status).pack(anchor="w", pady=(6, 0))
+
+    def capture_hotkey(self):
+        """Register a hotkey directly from a physical keypress, including combos."""
+        if self.enabled:
+            messagebox.showinfo("先に停止", "キーを変更する前にマクロを停止してください。")
+            return
+        if self.capturing:
+            return
+        self.capturing = True
+        self.capture_keys = set()
+        self.capture_button.configure(text="キーを押してください", state="disabled")
+        self.status.set("新しい操作キーを押してください（Escでキャンセル）")
+        self.capture_hook = keyboard.hook(self.on_capture_event, suppress=False)
+
+    def on_capture_event(self, event):
+        if not self.capturing:
+            return
+        name = event.name
+        modifiers = {"ctrl", "shift", "alt", "windows"}
+        alias = {"left ctrl": "ctrl", "right ctrl": "ctrl",
+                 "left shift": "shift", "right shift": "shift",
+                 "left alt": "alt", "right alt": "alt",
+                 "left windows": "windows", "right windows": "windows"}
+        name = alias.get(name, name)
+        if event.event_type == "down" and name in modifiers:
+            self.capture_keys.add(name)
+            return
+        if event.event_type != "down" or name in modifiers:
+            return
+        if name == "esc":
+            self.events.put(("captured", None))
+            return
+        combo = "+".join(sorted(self.capture_keys) + [name])
+        self.events.put(("captured", combo))
+
+    def finish_capture(self, combo):
+        self.capturing = False
+        if self.capture_hook is not None:
+            keyboard.unhook(self.capture_hook)
+            self.capture_hook = None
+        self.capture_button.configure(text="キーを登録", state="normal")
+        if combo:
+            self.hotkey_var.set(combo)
+            self.status.set(f"操作キーを登録：{combo}（保存して開始で反映）")
+        else:
+            self.status.set("キー登録をキャンセルしました")
 
     def refresh_windows(self):
         windows = [(hwnd, title) for hwnd, title in list_windows()
@@ -235,6 +285,12 @@ class App:
             return
         try:
             new = self.validated()
+            if self.capturing:
+                raise ValueError("キーの登録を完了してから開始してください。")
+            try:
+                keyboard.parse_hotkey(new["hotkey"])
+            except (ValueError, KeyError) as exc:
+                raise ValueError("登録できないキーです。F8 または ctrl+shift+f9 のように指定してください。") from exc
             new["volume_gain"] = round(self.volume_var.get(), 1)
             config_path().write_text(json.dumps(new, ensure_ascii=False, indent=2),
                                      encoding="utf-8")
@@ -292,7 +348,8 @@ class App:
                 pyautogui.press(key)
                 time.sleep(settings["delay_ms"] / 1000)
             if self.enabled and is_foreground(hwnd):
-                pyautogui.click(button="right")
+                x, y = client_center(hwnd)
+                pyautogui.click(x=x, y=y, button="right")
                 self.events.put("選択したウィンドウで操作を1回実行しました")
             else:
                 self.events.put("対象ウィンドウからフォーカスが外れたため中断しました")
@@ -309,6 +366,9 @@ class App:
                 event = self.events.get_nowait()
                 if isinstance(event, tuple):
                     kind, detail = event
+                    if kind == "captured":
+                        self.finish_capture(detail)
+                        continue
                     self.creating_pack = False
                     self.pack_button.configure(state="normal")
                     if kind == "pack_ready":
@@ -335,6 +395,8 @@ class App:
         self.status.set("停止中")
 
     def close(self):
+        if self.capturing:
+            self.finish_capture(None)
         self.stop()
         self.closing = True
         self.root.destroy()
