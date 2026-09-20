@@ -26,6 +26,10 @@ user32.SetForegroundWindow.restype = wintypes.BOOL
 user32.ShowWindow.argtypes = [wintypes.HWND, ctypes.c_int]
 user32.IsIconic.argtypes = [wintypes.HWND]
 user32.IsIconic.restype = wintypes.BOOL
+user32.GetClientRect.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.RECT)]
+user32.GetClientRect.restype = wintypes.BOOL
+user32.ClientToScreen.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.POINT)]
+user32.ClientToScreen.restype = wintypes.BOOL
 user32.GetWindowThreadProcessId.argtypes = [wintypes.HWND, ctypes.POINTER(wintypes.DWORD)]
 user32.GetWindowThreadProcessId.restype = wintypes.DWORD
 user32.AttachThreadInput.argtypes = [wintypes.DWORD, wintypes.DWORD, wintypes.BOOL]
@@ -122,3 +126,16 @@ def activate_window(hwnd):
             return True, ""
         time.sleep(0.05)
     return False, "Windowsが画面の切り替えを許可しませんでした。ウィンドウモードでお試しください。"
+
+def client_center(hwnd):
+    """Return a screen point inside the selected game (even on monitor 2)."""
+    rect = wintypes.RECT()
+    if not hwnd or not user32.IsWindow(hwnd) or not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        raise RuntimeError("ゲーム画面の位置を取得できません。再検索してください。")
+    if rect.right <= rect.left or rect.bottom <= rect.top:
+        raise RuntimeError("ゲーム画面が最小化されているか、表示できません。")
+    point = wintypes.POINT((rect.right - rect.left) // 2,
+                           (rect.bottom - rect.top) // 2)
+    if not user32.ClientToScreen(hwnd, ctypes.byref(point)):
+        raise RuntimeError("ゲーム画面の座標を取得できません。")
+    return point.x, point.y
