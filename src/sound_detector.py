@@ -15,7 +15,7 @@ from scipy.ndimage import zoom
 from scipy.signal import stft
 
 SAMPLE_RATE = 16000
-HOP = 160
+HOP = 320
 BANDS = 72
 FREQUENCIES = np.geomspace(170, 6800, BANDS)
 TEMPOS = (0.70, 0.82, 0.92, 1.0, 1.09, 1.20, 1.36)
@@ -58,8 +58,8 @@ def fingerprint(samples):
 
 def make_templates(samples):
     samples = np.asarray(samples, dtype=np.float32).reshape(-1)
-    # Use the loudest ~0.8s rather than assuming the beginning is not silent.
-    duration = min(len(samples), int(0.8 * SAMPLE_RATE))
+    # A short, distinctive fragment avoids waiting for a full second after the bite.
+    duration = min(len(samples), int(0.42 * SAMPLE_RATE))
     if duration < int(0.25 * SAMPLE_RATE):
         raise ValueError("検出音は0.25秒以上必要です")
     # Use cumulative energy to avoid a quadratic-time convolution on long files.
@@ -104,7 +104,7 @@ def match_score(recent_pcm, templates):
             continue
         # Compare a few nearby offsets: the device capture is not frame aligned.
         latest = signal.shape[1] - length
-        for offset in range(max(0, latest - 50), latest + 1, 5):
+        for offset in range(max(0, latest - 20), latest + 1, 2):
             candidate = signal[:, offset:offset + length]
             candidate = candidate - candidate.mean()
             energy = float(np.linalg.norm(candidate))
@@ -129,14 +129,14 @@ def monitor_sound(path, should_stop, on_match, on_status, threshold=0.78):
     on_status("音声監視中：" + speaker.name + "（ほかのアプリの音にも反応する場合があります）")
     buffer = np.empty(0, dtype=np.float32)
     last_match = 0.0
-    with loopback.recorder(samplerate=SAMPLE_RATE, blocksize=4096) as recorder:
+    with loopback.recorder(samplerate=SAMPLE_RATE, blocksize=2048) as recorder:
         while not should_stop.is_set():
-            frames = recorder.record(numframes=4096)
+            frames = recorder.record(numframes=2048)
             if frames.size == 0:
                 continue
             mono = np.asarray(frames, dtype=np.float32).mean(axis=1)
-            buffer = np.concatenate((buffer, mono))[-int(2.5 * SAMPLE_RATE):]
-            if len(buffer) < SAMPLE_RATE:
+            buffer = np.concatenate((buffer, mono))[-int(1.5 * SAMPLE_RATE):]
+            if len(buffer) < int(0.50 * SAMPLE_RATE):
                 continue
             score = match_score(buffer, templates)
             now = time.monotonic()
