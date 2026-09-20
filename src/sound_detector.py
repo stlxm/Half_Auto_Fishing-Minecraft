@@ -17,8 +17,11 @@ SAMPLE_RATE = 16000
 HOP = 320
 BANDS = 72
 FREQUENCIES = np.geomspace(170, 6800, BANDS)
-TEMPOS = (0.70, 0.82, 0.92, 1.0, 1.09, 1.20, 1.36)
-PITCHES = (-5, -3, -2, -1, 0, 1, 2, 3, 5)
+# Minecraft can change playback speed AND pitch together, or independently.
+# Keep the search bounded: expanding this too far costs CPU and false positives.
+TEMPOS = (0.65, 0.76, 0.86, 0.94, 1.0, 1.07, 1.16, 1.30, 1.50)
+PITCHES = (-7, -5, -3, -1, 0, 1, 3, 5, 7)
+
 
 
 def decode_audio(path):
@@ -57,8 +60,9 @@ def fingerprint(samples):
 
 def make_templates(samples):
     samples = np.asarray(samples, dtype=np.float32).reshape(-1)
-    # A short, distinctive fragment avoids waiting for a full second after the bite.
-    duration = min(len(samples), int(0.42 * SAMPLE_RATE))
+    # Include a distinct phrase of the SE while keeping capture latency short.
+    # 0.55 s improves discrimination for short multi-tone signature sounds.
+    duration = min(len(samples), int(0.55 * SAMPLE_RATE))
     if duration < int(0.25 * SAMPLE_RATE):
         raise ValueError("検出音は0.25秒以上必要です")
     # Use cumulative energy to avoid a quadratic-time convolution on long files.
@@ -73,6 +77,8 @@ def make_templates(samples):
     templates = []
     steps_per_semitone = (BANDS - 1) / (12 * np.log2(FREQUENCIES[-1] / FREQUENCIES[0]))
     for tempo in TEMPOS:
+        # Speed changes shift timing. The pitch variants below cover the
+        # accompanying shift in spectral bands as well as independent pitch.
         stretched = zoom(original, (1, 1 / tempo), order=1)
         for pitch in PITCHES:
             # Moving log-frequency bins and resizing time independently allows
@@ -101,9 +107,10 @@ def match_score(recent_pcm, templates):
         length = template.shape[1]
         if length > signal.shape[1]:
             continue
-        # Compare a few nearby offsets: the device capture is not frame aligned.
+        # Search the entire recent buffer. Limiting this to the last ~0.4 s
+        # missed a bite while the recognizer was still processing prior audio.
         latest = signal.shape[1] - length
-        for offset in range(max(0, latest - 20), latest + 1, 2):
+        for offset in range(0, latest + 1, 2):
             candidate = signal[:, offset:offset + length]
             candidate = candidate - candidate.mean()
             energy = float(np.linalg.norm(candidate))
@@ -126,7 +133,7 @@ def convert_process_pcm(pcm):
     return resample_poly(mono, 1, 3).astype(np.float32)
 
 
-def monitor_sound(path, target_pid, should_stop, on_match, on_status, threshold=0.78):
+def monitor_sound(path, target_pid, should_stop, on_match, on_status, threshold=0.70):
     """Capture only selected game process audio; NEVER fall back to system-wide capture."""
     from proctap import ProcessAudioCapture
 
