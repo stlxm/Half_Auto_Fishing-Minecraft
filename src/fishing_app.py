@@ -162,7 +162,7 @@ class App:
         ttk.Separator(box, orient="horizontal").pack(fill="x", pady=10)
         ttk.Label(box, text="効果音による自動操作（初期状態：オフ）",
                   font=("Yu Gothic UI", 11, "bold")).pack(anchor="w")
-        ttk.Label(box, text="Windows既定の再生デバイスから音を検出します。").pack(anchor="w")
+        ttk.Label(box, text="選択したMinecraftの音声だけを検出（YouTubeを除外）。").pack(anchor="w")
         self.audio_label = tk.StringVar(value=Path(self.audio_path).name if self.audio_path else "検出音は未選択")
         ttk.Label(box, textvariable=self.audio_label).pack(anchor="w", pady=(3, 2))
         ttk.Button(box, text="検出するMP3・WAV・OGGを選択",
@@ -245,18 +245,23 @@ class App:
             messagebox.showerror("自動検出を開始できません", str(exc))
             return
         self.target_pid = window_pid(self.target_hwnd)
+        if self.target_pid <= 0:
+            messagebox.showwarning("対象不明", "Minecraftのウィンドウを再選択してください。")
+            return
         self.audio_stop = threading.Event()
         self.auto_running = True
         self.auto_button.configure(text="自動検出を停止")
-        self.auto_status.set("Windowsの再生音を監視する準備をしています…")
+        self.auto_status.set(f"Minecraftの音声のみを取得しています（PID {self.target_pid}）…")
+        selected_pid = self.target_pid
         self.auto_thread = threading.Thread(
-            target=self.auto_worker, args=(self.audio_path, self.audio_stop), daemon=True
+            target=self.auto_worker,
+            args=(self.audio_path, selected_pid, self.audio_stop), daemon=True
         )
         self.auto_thread.start()
 
-    def auto_worker(self, path, stop_event):
+    def auto_worker(self, path, selected_pid, stop_event):
         try:
-            monitor_sound(path, stop_event,
+            monitor_sound(path, selected_pid, stop_event,
                           lambda: self.on_auto_match(stop_event),
                           lambda msg: self.events.put(("audio_status", (stop_event, msg))))
         except Exception as exc:
