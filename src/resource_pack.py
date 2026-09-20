@@ -51,7 +51,10 @@ def create_resource_pack(source: str, destination: str, gain: float = 3.0) -> No
         temporary_zip.close()
         pack_meta = {
             "pack": {
-                "pack_format": PACK_FORMAT,
+                # Modern Java resource packs (1.21.9+) require a supported
+                # format range. pack_format alone is legacy metadata.
+                "min_format": PACK_FORMAT,
+                "max_format": PACK_FORMAT,
                 "description": "Half Auto Fishing - Custom Fishing Splash SE (Java 26.2)"
             }
         }
