@@ -17,7 +17,7 @@ SOUNDS_JSON = {
 }
 
 
-def create_resource_pack(source: str, destination: str) -> None:
+def create_resource_pack(source: str, destination: str, gain: float = 3.0) -> None:
     """Convert and amplify MP3/WAV/OGG, then write a complete resource-pack ZIP."""
     source_path = Path(source)
     zip_path = Path(destination)
@@ -38,8 +38,8 @@ def create_resource_pack(source: str, destination: str) -> None:
                 if audio.read(4) != b"OggS":
                     raise ValueError("OGG音声として読み込めません。")
         # Re-encode OGG inputs too, so every supported input receives the same
-        # threefold gain and peak limiting; the original file is never changed.
-        convert_to_ogg(str(source_path), str(ogg_file), gain=3.0)
+        # selected gain and peak limiting; the original file is never changed.
+        convert_to_ogg(str(source_path), str(ogg_file), gain=gain)
 
         draft_zip = Path(directory) / "pack.zip"
         pack_meta = {
