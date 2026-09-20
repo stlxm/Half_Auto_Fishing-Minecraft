@@ -60,7 +60,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("625x890")
+        self.root.geometry("625x900")
         self.root.resizable(True, True)
         self.data = load_settings()
         self.hotkey_var = tk.StringVar(value=self.data["hotkey"])
@@ -259,7 +259,8 @@ class App:
             self.events.put(("audio_stopped", stop_event))
 
     def on_auto_match(self):
-        self.queue_action("音声")
+        if self.auto_running and not self.audio_stop.is_set():
+            self.queue_action("音声")
 
     def stop_auto(self):
         if not self.auto_running:
@@ -474,7 +475,7 @@ class App:
 
     def queue_action(self, source):
         if not self.lock.acquire(blocking=False):
-            self.events.put(f"操作キー受信（{count}回目）：前の操作を実行中")
+            self.events.put(f"{source}トリガー受信：前の操作を実行中")
             return
         now = time.monotonic()
         if now - self.last_start < max(self.data["cooldown_ms"] / 1000, 4.0 if source == "音声" else 0.0):
