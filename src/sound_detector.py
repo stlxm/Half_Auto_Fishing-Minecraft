@@ -170,7 +170,8 @@ class LoudnessTrigger:
 
 
 def monitor_sound(path, target_pid, should_stop, on_match, on_status,
-                  threshold=0.70, detect_mode="signature", volume_threshold_db=-21.0):
+                  threshold=0.70, detect_mode="signature", volume_threshold_db=-21.0,
+                  on_level=None):
     """Only the selected game process is captured; never mix in browser audio."""
     from proctap import ProcessAudioCapture
 
@@ -199,10 +200,13 @@ def monitor_sound(path, target_pid, should_stop, on_match, on_status,
             if mono.size == 0:
                 continue
             now = time.monotonic()
+            # Report actual game-process loudness irrespective of detection mode.
+            # Forward the same reading used by the volume trigger to the GUI.
+            level = rms_dbfs(mono[-int(0.08 * SAMPLE_RATE):])
+            if on_level is not None:
+                on_level(level, volume_threshold_db, detect_mode)
             if detect_mode == "volume":
-                # Measure on original 48 kHz audio: no sample-rate conversion
-                # dependence in the loudness trigger. Use 80 ms windows.
-                level = rms_dbfs(mono[-int(0.08 * SAMPLE_RATE):])
+                # 80 ms of game-process PCM; use exactly the GUI's reading.
                 triggered = level_trigger.update(level, now)
                 if now - last_status >= 1.0:
                     on_status(f"Minecraft音量 {level:.1f} dBFS／基準 {volume_threshold_db:.1f} dBFS")
