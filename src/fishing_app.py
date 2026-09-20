@@ -550,13 +550,32 @@ class App:
                     if kind == "captured":
                         self.finish_capture(detail)
                         continue
+                    if kind == "audio_status":
+                        if self.auto_running:
+                            self.auto_status.set(detail)
+                        continue
+                    if kind == "audio_error":
+                        self.auto_running = False
+                        self.audio_stop.set()
+                        self.auto_button.configure(text="自動検出を開始")
+                        self.auto_status.set("音声監視エラー：" + detail)
+                        continue
+                    if kind == "audio_stopped":
+                        if self.audio_stop is detail and not self.auto_running:
+                            self.auto_status.set("音声監視は停止中")
+                        continue
                     self.creating_pack = False
                     self.pack_button.configure(state="normal")
                     if kind == "pack_ready":
-                        self.pack_status.set("作成完了：" + Path(detail).name)
+                        zip_path, audio_source = detail
+                        self.pack_status.set("作成完了：" + Path(zip_path).name)
+                        if not self.auto_running:
+                            self.audio_path = audio_source
+                            self.audio_label.set(Path(audio_source).name)
+                            self.save_audio_path()
                         messagebox.showinfo(
                             "リソースパック完成",
-                            "音声入りリソースパックを保存しました。\\n" + detail +
+                            "音声入りリソースパックを保存しました。\\n" + zip_path +
                             "\\n\\nZIPのままMinecraftのresourcepacksに入れて有効にしてください。")
                     else:
                         self.pack_status.set("作成失敗")
