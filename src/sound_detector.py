@@ -129,18 +129,23 @@ def monitor_sound(path, should_stop, on_match, on_status, threshold=0.78):
     on_status("音声監視中：" + speaker.name + "（ほかのアプリの音にも反応する場合があります）")
     buffer = np.empty(0, dtype=np.float32)
     last_match = 0.0
+    last_status = time.monotonic()
     with loopback.recorder(samplerate=SAMPLE_RATE, blocksize=2048) as recorder:
         while not should_stop.is_set():
             frames = recorder.record(numframes=2048)
             if frames.size == 0:
                 continue
-            mono = np.asarray(frames, dtype=np.float32).mean(axis=1)
+            captured = np.asarray(frames, dtype=np.float32)
+            mono = captured.mean(axis=1) if captured.ndim == 2 else captured
             buffer = np.concatenate((buffer, mono))[-int(1.5 * SAMPLE_RATE):]
             if len(buffer) < int(0.50 * SAMPLE_RATE):
                 continue
             score = match_score(buffer, templates)
             now = time.monotonic()
-            if score >= threshold and now - last_match >= 4.0:
+            if now - last_status >= 3.0:
+                on_status(f"音声監視中：現在の類似度 {score:.2f}／反応基準 {threshold:.2f}")
+                last_status = now
+            if score >= threshold and now - last_match >= 4.0 and not should_stop.is_set():
                 last_match = now
                 on_status(f"登録音を検出（類似度 {score:.2f}）")
                 on_match()
