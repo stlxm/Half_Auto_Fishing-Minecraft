@@ -228,6 +228,11 @@ class App:
         if self.mode_var.get() not in MODES:
             messagebox.showwarning("操作未設定", "操作内容を選択してください。")
             return
+        if MODES.get(self.mode_var.get()) == "smart" and self.pause_template is None:
+            messagebox.showwarning(
+                "メニュー未登録", "ポーズメニューを登録してから自動検出を開始してください。"
+            )
+            return
         # Audio-only operation shares the same action settings as the manual key.
         try:
             if self.enabled:
@@ -251,15 +256,16 @@ class App:
 
     def auto_worker(self, path, stop_event):
         try:
-            monitor_sound(path, stop_event, self.on_auto_match,
-                          lambda msg: self.events.put(("audio_status", msg)))
+            monitor_sound(path, stop_event,
+                          lambda: self.on_auto_match(stop_event),
+                          lambda msg: self.events.put(("audio_status", (stop_event, msg))))
         except Exception as exc:
-            self.events.put(("audio_error", str(exc)))
+            self.events.put(("audio_error", (stop_event, str(exc))))
         finally:
             self.events.put(("audio_stopped", stop_event))
 
-    def on_auto_match(self):
-        if self.auto_running and not self.audio_stop.is_set():
+    def on_auto_match(self, stop_event):
+        if self.auto_running and self.audio_stop is stop_event and not stop_event.is_set():
             self.queue_action("音声")
 
     def stop_auto(self):
@@ -552,14 +558,17 @@ class App:
                         self.finish_capture(detail)
                         continue
                     if kind == "audio_status":
-                        if self.auto_running:
-                            self.auto_status.set(detail)
+                        event_stop, status_text = detail
+                        if self.auto_running and self.audio_stop is event_stop:
+                            self.auto_status.set(status_text)
                         continue
                     if kind == "audio_error":
-                        self.auto_running = False
-                        self.audio_stop.set()
-                        self.auto_button.configure(text="自動検出を開始")
-                        self.auto_status.set("音声監視エラー：" + detail)
+                        event_stop, error_text = detail
+                        if self.audio_stop is event_stop:
+                            self.auto_running = False
+                            self.audio_stop.set()
+                            self.auto_button.configure(text="自動検出を開始")
+                            self.auto_status.set("音声監視エラー：" + error_text)
                         continue
                     if kind == "audio_stopped":
                         if self.audio_stop is detail and not self.auto_running:
