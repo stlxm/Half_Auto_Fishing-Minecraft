@@ -161,3 +161,17 @@ def client_center(hwnd):
     if not user32.ClientToScreen(hwnd, ctypes.byref(point)):
         raise RuntimeError("ゲーム画面の座標を取得できません。")
     return point.x, point.y
+
+def client_bounds(hwnd):
+    """Return game client rectangle in virtual desktop coordinates."""
+    rect = wintypes.RECT()
+    if not hwnd or not user32.IsWindow(hwnd) or not user32.GetClientRect(hwnd, ctypes.byref(rect)):
+        raise RuntimeError("ゲーム画面の位置を取得できません。再検索してください。")
+    point = wintypes.POINT(0, 0)
+    if not user32.ClientToScreen(hwnd, ctypes.byref(point)):
+        raise RuntimeError("ゲーム画面の座標を取得できません。")
+    width = rect.right - rect.left
+    height = rect.bottom - rect.top
+    if width < 100 or height < 100:
+        raise RuntimeError("ゲーム画面が最小化されているか表示できません。")
+    return point.x, point.y, width, height
