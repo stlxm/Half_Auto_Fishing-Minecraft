@@ -1,0 +1,27 @@
+name: Windows EXE build
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt pyinstaller
+      - name: Build single EXE (no console)
+        run: python -m PyInstaller --noconfirm --clean --onefile --windowed --name HalfAutoFishing src/fishing_app.py
+      - name: Upload EXE
+        uses: actions/upload-artifact@v4
+        with:
+          name: HalfAutoFishing-Windows
+          path: dist/HalfAutoFishing.exe
+          if-no-files-found: error
