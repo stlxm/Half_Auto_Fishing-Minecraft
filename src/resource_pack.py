@@ -1,5 +1,6 @@
 """Create a ready-to-install Minecraft resource pack containing user-selected audio."""
 import json
+import os
 import tempfile
 import zipfile
 from pathlib import Path
@@ -41,22 +42,30 @@ def create_resource_pack(source: str, destination: str, gain: float = 3.0) -> No
         # selected gain and peak limiting; the original file is never changed.
         convert_to_ogg(str(source_path), str(ogg_file), gain=gain)
 
-        draft_zip = Path(directory) / "pack.zip"
+        # Keep the temporary ZIP in the destination directory. os.replace()
+        # cannot move a file across Windows drive volumes (e.g. C: -> D:).
+        temporary_zip = tempfile.NamedTemporaryFile(
+            prefix=".fishing_se_", suffix=".zip", dir=zip_path.parent, delete=False
+        )
+        draft_zip = Path(temporary_zip.name)
+        temporary_zip.close()
         pack_meta = {
             "pack": {
                 "pack_format": PACK_FORMAT,
                 "description": "Half Auto Fishing - Custom Fishing Splash SE (Java 26.2)"
             }
         }
-        with zipfile.ZipFile(draft_zip, mode="w",
-                             compression=zipfile.ZIP_DEFLATED) as archive:
-            archive.writestr("pack.mcmeta",
-                             json.dumps(pack_meta, ensure_ascii=False, indent=2))
-            archive.writestr("assets/minecraft/sounds.json",
-                             json.dumps(SOUNDS_JSON, ensure_ascii=False, indent=2))
-            archive.write(ogg_file, SOUND_ENTRY)
+        try:
+            with zipfile.ZipFile(draft_zip, mode="w",
+                                 compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr("pack.mcmeta",
+                                 json.dumps(pack_meta, ensure_ascii=False, indent=2))
+                archive.writestr("assets/minecraft/sounds.json",
+                                 json.dumps(SOUNDS_JSON, ensure_ascii=False, indent=2))
+                archive.write(ogg_file, SOUND_ENTRY)
 
-        # Move the fully assembled ZIP into place only after successful conversion.
-        # os.replace supports replacing an existing destination on Windows.
-        import os
-        os.replace(draft_zip, zip_path)
+            # Both paths are now on the same volume, including D: and external disks.
+            os.replace(draft_zip, zip_path)
+        finally:
+            # On failed writes, do not leave a partial ZIP in the destination.
+            draft_zip.unlink(missing_ok=True)
