@@ -1,11 +1,10 @@
-"""Local Windows speaker-loopback matching of a chosen fishing SE.
+"""Local per-process Windows audio matching of a chosen fishing SE.
 
 Matches short time/frequency patterns, trying independent time and pitch
 variations. This is an experimental approximate recognizer, not a guarantee
 of distinguishing Minecraft sound events from other desktop audio.
 """
 import subprocess
-import threading
 import time
 from pathlib import Path
 
@@ -114,39 +113,53 @@ def match_score(recent_pcm, templates):
     return best
 
 
-def monitor_sound(path, should_stop, on_match, on_status, threshold=0.78):
-    """Blocking loop for a background thread. Records default speaker output."""
-    import soundcard as sc
+def convert_process_pcm(pcm):
+    """ProcTap Windows output: interleaved float32, stereo, 48 kHz."""
+    from scipy.signal import resample_poly
 
-    on_status("検出音を解析しています…")
+    interleaved = np.frombuffer(pcm, dtype="<f4")
+    if interleaved.size < 2:
+        return np.empty(0, dtype=np.float32)
+    stereo = interleaved[:interleaved.size - interleaved.size % 2].reshape(-1, 2)
+    # Do not include browser audio: only these bytes come from the target PID.
+    mono = stereo.mean(axis=1, dtype=np.float32)
+    return resample_poly(mono, 1, 3).astype(np.float32)
+
+
+def monitor_sound(path, target_pid, should_stop, on_match, on_status, threshold=0.78):
+    """Capture only selected game process audio; NEVER fall back to system-wide capture."""
+    from proctap import ProcessAudioCapture
+
+    if not isinstance(target_pid, int) or target_pid <= 0:
+        raise ValueError("MinecraftのプロセスIDを取得できません。ウィンドウを再選択してください。")
+    on_status(f"検出音を解析中… Minecraft PID {target_pid}")
     templates = make_templates(decode_audio(path))
-    speaker = sc.default_speaker()
-    if speaker is None:
-        raise RuntimeError("Windowsの既定の再生デバイスが見つかりません")
-    loopback = sc.get_microphone(id=speaker.id, include_loopback=True)
-    if loopback is None:
-        raise RuntimeError("再生音のループバック録音を開始できません")
-    on_status("音声監視中：" + speaker.name + "（ほかのアプリの音にも反応する場合があります）")
     buffer = np.empty(0, dtype=np.float32)
     last_match = 0.0
     last_status = time.monotonic()
-    with loopback.recorder(samplerate=SAMPLE_RATE, blocksize=2048) as recorder:
+    on_status(f"Minecraftの音声だけを監視中（PID {target_pid}）。YouTube音声は対象外です")
+    tap = ProcessAudioCapture(pid=target_pid)
+    try:
+        tap.start()
         while not should_stop.is_set():
-            frames = recorder.record(numframes=2048)
-            if frames.size == 0:
+            pcm = tap.read(timeout=0.3)
+            if not pcm:
                 continue
-            captured = np.asarray(frames, dtype=np.float32)
-            mono = captured.mean(axis=1) if captured.ndim == 2 else captured
+            mono = convert_process_pcm(pcm)
+            if mono.size == 0:
+                continue
             buffer = np.concatenate((buffer, mono))[-int(1.5 * SAMPLE_RATE):]
-            if len(buffer) < int(0.50 * SAMPLE_RATE):
+            if buffer.size < int(0.50 * SAMPLE_RATE):
                 continue
             score = match_score(buffer, templates)
             now = time.monotonic()
             if now - last_status >= 3.0:
-                on_status(f"音声監視中：現在の類似度 {score:.2f}／反応基準 {threshold:.2f}")
+                on_status(f"Minecraft音声のみ（PID {target_pid}）：類似度 {score:.2f}／基準 {threshold:.2f}")
                 last_status = now
             if score >= threshold and now - last_match >= 4.0 and not should_stop.is_set():
                 last_match = now
-                on_status(f"登録音を検出（類似度 {score:.2f}）")
+                on_status(f"Minecraftで登録音を検出（類似度 {score:.2f}）")
                 on_match()
-    on_status("音声監視を停止しました")
+    finally:
+        tap.close()
+        on_status("Minecraftの音声監視を停止しました")
