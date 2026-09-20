@@ -22,7 +22,7 @@ MODES = {
 }
 KEYS = [f"f{i}" for i in range(6, 13)] + ["insert", "home", "end", "page up", "page down"]
 DEFAULT = {"hotkey": "f8", "mode": "click", "delay_ms": 120, "cooldown_ms": 500,
-           "minecraft_only": True, "focus_minecraft": True}
+           "minecraft_only": True, "focus_minecraft": True, "volume_gain": 3.0}
 pyautogui.PAUSE = 0
 
 
@@ -101,6 +101,7 @@ def load_settings():
         data["cooldown_ms"] = max(300, min(10000, int(data["cooldown_ms"])))
         data["minecraft_only"] = bool(data["minecraft_only"])
         data["focus_minecraft"] = bool(data["focus_minecraft"])
+        data["volume_gain"] = max(1.0, min(5.0, round(float(data["volume_gain"]), 1)))
         return data
     except (OSError, ValueError, TypeError, KeyError):
         return DEFAULT.copy()
@@ -110,7 +111,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("510x545")
+        self.root.geometry("510x610")
         self.root.resizable(False, False)
         self.data = load_settings()
         self.hotkey_var = tk.StringVar(value=self.data["hotkey"])
@@ -120,6 +121,7 @@ class App:
         self.cooldown_var = tk.StringVar(value=str(self.data["cooldown_ms"]))
         self.only_var = tk.BooleanVar(value=self.data["minecraft_only"])
         self.focus_var = tk.BooleanVar(value=self.data["focus_minecraft"])
+        self.volume_var = tk.DoubleVar(value=self.data["volume_gain"])
         self.status = tk.StringVar(value="停止中")
         self.enabled = False
         self.hook = None
@@ -169,10 +171,30 @@ class App:
         ttk.Separator(box, orient="horizontal").pack(fill="x", pady=14)
         ttk.Label(box, text="釣りSEリソースパック作成", font=("Yu Gothic UI", 11, "bold")).pack(anchor="w")
         ttk.Label(box, text="MP3・WAV・OGGから導入用ZIPを作ります。").pack(anchor="w", pady=(3, 6))
+        gain_row = ttk.Frame(box)
+        gain_row.pack(fill="x", pady=(2, 6))
+        ttk.Label(gain_row, text="音量（1.0～5.0倍）").pack(side="left")
+        self.gain_display = ttk.Label(gain_row, text=f'{self.volume_var.get():.1f} 倍')
+        self.gain_display.pack(side="right")
+        ttk.Scale(box, from_=1.0, to=5.0, orient="horizontal",
+                  variable=self.volume_var, command=self.on_gain_change).pack(fill="x")
         self.pack_button = ttk.Button(box, text="音声を選んでリソースパックを作成", command=self.choose_pack_audio)
         self.pack_button.pack(fill="x")
         self.pack_status = tk.StringVar(value="作成待機中")
         ttk.Label(box, textvariable=self.pack_status).pack(anchor="w", pady=(6, 0))
+
+    def on_gain_change(self, value):
+        gain = round(float(value), 1)
+        self.gain_display.configure(text=f"{gain:.1f} 倍")
+        # Persist independently from the fishing hotkey/start button.
+        try:
+            updated = load_settings()
+            updated["volume_gain"] = gain
+            config_path().write_text(
+                json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError:
+            self.pack_status.set("音量の設定を保存できませんでした")
 
     def choose_pack_audio(self):
         if self.creating_pack:
@@ -197,11 +219,12 @@ class App:
         self.creating_pack = True
         self.pack_button.configure(state="disabled")
         self.pack_status.set("音声を変換してリソースパックを作成しています…")
-        threading.Thread(target=self.build_pack, args=(source, target), daemon=True).start()
+        gain = round(self.volume_var.get(), 1)
+        threading.Thread(target=self.build_pack, args=(source, target, gain), daemon=True).start()
 
-    def build_pack(self, source, target):
+    def build_pack(self, source, target, gain):
         try:
-            create_resource_pack(source, target)
+            create_resource_pack(source, target, gain=gain)
             self.events.put(("pack_ready", target))
         except Exception as exc:
             self.events.put(("pack_error", str(exc)))
@@ -228,6 +251,7 @@ class App:
             new = self.validated()
             config_path().write_text(json.dumps(new, ensure_ascii=False, indent=2),
                                      encoding="utf-8")
+            new["volume_gain"] = round(self.volume_var.get(), 1)
             self.data = new
             self.hook = keyboard.add_hotkey(new["hotkey"], self.on_hotkey,
                                              suppress=False, trigger_on_release=False)
