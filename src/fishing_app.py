@@ -60,7 +60,7 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("625x900")
+        self.root.geometry("625x930")
         self.root.resizable(True, True)
         self.data = load_settings()
         self.hotkey_var = tk.StringVar(value=self.data["hotkey"])
@@ -101,7 +101,7 @@ class App:
         box = ttk.Frame(self.root, padding=18)
         box.pack(fill="both", expand=True)
         ttk.Label(box, text=APP_NAME, font=("Yu Gothic UI", 16, "bold")).pack(anchor="w")
-        ttk.Label(box, text="音を聞いて、設定したキーを1回押すと操作します。").pack(
+        ttk.Label(box, text="手動キーまたは任意で開始する音声監視で1回操作します。").pack(
             anchor="w", pady=(4, 14))
         row = ttk.Frame(box)
         row.pack(fill="x", pady=4)
@@ -426,6 +426,8 @@ class App:
             return
         try:
             new = self.validated()
+            if new["mode"] == "smart" and self.pause_template is None:
+                raise ValueError("先にポーズメニューを登録してください。")
             if self.capturing:
                 raise ValueError("キーの登録を完了してから開始してください。")
             try:
