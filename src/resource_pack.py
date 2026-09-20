@@ -18,7 +18,7 @@ SOUNDS_JSON = {
 
 
 def create_resource_pack(source: str, destination: str) -> None:
-    """Convert MP3/WAV or reuse OGG, then write a complete resource-pack ZIP."""
+    """Convert and amplify MP3/WAV/OGG, then write a complete resource-pack ZIP."""
     source_path = Path(source)
     zip_path = Path(destination)
     if source_path.suffix.lower() not in {".mp3", ".wav", ".ogg"}:
@@ -33,14 +33,9 @@ def create_resource_pack(source: str, destination: str) -> None:
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory() as directory:
         ogg_file = Path(directory) / "fishing_alert.ogg"
-        if source_path.suffix.lower() == ".ogg":
-            # Rename-by-extension is not conversion: reject non-Ogg data.
-            with source_path.open("rb") as audio:
-                if audio.read(4) != b"OggS":
-                    raise ValueError("OGG音声として読み込めません。")
-            ogg_file.write_bytes(source_path.read_bytes())
-        else:
-            convert_to_ogg(str(source_path), str(ogg_file))
+        # Re-encode OGG inputs too, so every supported input receives the same
+        # threefold gain and peak limiting; the original file is never changed.
+        convert_to_ogg(str(source_path), str(ogg_file), gain=3.0)
 
         draft_zip = Path(directory) / "pack.zip"
         pack_meta = {
