@@ -11,7 +11,8 @@ from tkinter import filedialog, messagebox, ttk
 
 from resource_pack import create_resource_pack
 from window_control import (list_windows, default_minecraft_window,
-                            activate_window, is_foreground, window_title, client_center)
+                            activate_window, is_foreground, window_title, client_center,
+                            window_pid, restore_same_process_window)
 
 import keyboard
 import pyautogui
@@ -67,6 +68,7 @@ class App:
         self.only_var = tk.BooleanVar(value=self.data["minecraft_only"])
         self.focus_var = tk.BooleanVar(value=self.data["focus_minecraft"])
         self.target_hwnd = None
+        self.target_pid = 0
         self.capture_hook = None
         self.capturing = False
         self.capture_keys = set()
@@ -78,6 +80,7 @@ class App:
         self.hook = None
         self.lock = threading.Lock()
         self.last_start = 0.0
+        self.hotkey_count = 0
         self.events = queue.Queue()
         self.closing = False
         self.creating_pack = False
@@ -124,7 +127,9 @@ class App:
         ttk.Label(box, text="注意：Escでメニューが開く場合は右クリックのみを選択。",
                   foreground="#8a5200").pack(anchor="w")
         self.button = ttk.Button(box, text="保存して開始", command=self.toggle)
-        self.button.pack(fill="x", pady=(18, 8))
+        self.button.pack(fill="x", pady=(12, 6))
+        self.rearm_button = ttk.Button(box, text="キー検知を再登録", command=self.rearm_hotkey)
+        self.rearm_button.pack(fill="x", pady=(0, 5))
         ttk.Label(box, textvariable=self.status).pack(anchor="w")
         ttk.Label(box, text="設定保存先：%APPDATA%\\HalfAutoFishing\\config.json",
                   foreground="#666666").pack(anchor="w", pady=(12, 0))
@@ -216,11 +221,16 @@ class App:
             else:
                 self.window_var.set("操作対象を選択してください")
         if self.target_hwnd:
+            self.target_pid = window_pid(self.target_hwnd)
             self.status.set("操作対象：" + window_title(self.target_hwnd)[:55])
+        else:
+            self.target_pid = 0
+            self.status.set("ゲーム画面を選択してください")
 
     def select_window(self, event=None):
         self.target_hwnd = self.window_choices.get(self.window_var.get())
         if self.target_hwnd:
+            self.target_pid = window_pid(self.target_hwnd)
             self.status.set("操作対象：" + window_title(self.target_hwnd)[:55])
 
     def on_gain_change(self, value):
@@ -310,28 +320,62 @@ class App:
                 self.hook = None
             messagebox.showwarning("操作対象が未選択", "「再検索」でMinecraftのゲーム画面を選んでください。")
             return
+        self.target_pid = window_pid(self.target_hwnd)
         self.enabled = True
         self.button.configure(text="停止")
-        self.status.set(f"動作中：{self.data['hotkey'].upper()} で1回実行")
+        self.status.set(f"キー待機中：{self.data['hotkey'].upper()}（受信数 {self.hotkey_count}）")
+
+    def rearm_hotkey(self):
+        """Recreate a stalled global hook without restarting the entire application."""
+        if not self.enabled:
+            self.status.set("先に「保存して開始」を押してください")
+            return
+        hotkey = self.data["hotkey"]
+        try:
+            if self.hook is not None:
+                keyboard.remove_hotkey(self.hook)
+                self.hook = None
+            self.hook = keyboard.add_hotkey(
+                hotkey, self.on_hotkey, suppress=False, trigger_on_release=False)
+            self.status.set(f"キー検知を再登録しました：{hotkey.upper()}")
+        except Exception as exc:
+            self.enabled = False
+            self.button.configure(text="保存して開始")
+            self.status.set(f"キー検知の再登録に失敗：{exc}")
 
     def on_hotkey(self):
-        if not self.enabled or not self.lock.acquire(blocking=False):
+        if not self.enabled:
+            return
+        self.hotkey_count += 1
+        count = self.hotkey_count
+        self.events.put(f"操作キーを受信しました（{count}回目）")
+        if not self.lock.acquire(blocking=False):
+            self.events.put(f"操作キー受信（{count}回目）：前の操作を実行中")
             return
         now = time.monotonic()
         if now - self.last_start < self.data["cooldown_ms"] / 1000:
             self.lock.release()
+            self.events.put("連続実行防止中です。少し待って押してください")
             return
         self.last_start = now
-        threading.Thread(target=self.execute, daemon=True).start()
+        try:
+            threading.Thread(target=self.execute, daemon=True).start()
+        except Exception as exc:
+            self.lock.release()
+            self.events.put(f"操作スレッドの開始に失敗：{exc}")
 
     def execute(self):
         try:
             settings = self.data.copy()
-            hwnd = self.target_hwnd
-            if not hwnd or not window_title(hwnd):
-                self.events.put("操作対象が見つかりません。ゲーム画面を再選択してください")
+            hwnd, recovery = restore_same_process_window(self.target_hwnd, self.target_pid)
+            if not hwnd:
+                self.events.put(recovery)
                 return
+            if hwnd != self.target_hwnd:
+                self.target_hwnd = hwnd
+                self.events.put("ゲームウィンドウを再検出しました")
             if settings["focus_minecraft"]:
+                self.events.put("操作キー受信：ゲーム画面への切り替え中…")
                 ok, reason = activate_window(hwnd)
                 if not ok:
                     self.events.put(reason)
