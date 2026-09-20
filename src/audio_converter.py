@@ -15,11 +15,15 @@ def convert_to_ogg(source: str, destination: str, gain: float = 1.0) -> None:
     if source_path.resolve() == output_path.resolve():
         raise ValueError("変換元とは異なる保存先を指定してください。")
 
-    if not 0 < gain <= 5:\n        raise ValueError("音量倍率は0より大きく5以下にしてください。")\n\n    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
+    if not 0 < gain <= 5:
+        raise ValueError("音量倍率は0より大きく5以下にしてください。")
+
+    ffmpeg = imageio_ffmpeg.get_ffmpeg_exe()
     args = [
         ffmpeg, "-hide_banner", "-loglevel", "error", "-nostdin",
         "-y", "-i", str(source_path), "-map", "0:a:0", "-vn",
-        "-af", f"volume={gain},alimiter=limit=0.95:level=0",\n        "-c:a", "libvorbis", "-q:a", "5", "-f", "ogg",
+        "-af", f"volume={gain},alimiter=limit=0.95:level=0",
+        "-c:a", "libvorbis", "-q:a", "5", "-f", "ogg",
         str(output_path),
     ]
     flags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
@@ -29,6 +33,7 @@ def convert_to_ogg(source: str, destination: str, gain: float = 1.0) -> None:
         if output_path.exists():
             output_path.unlink()
         raise RuntimeError(
-            "OGGへの変換に失敗しました。\n" +
+            "OGGへの変換に失敗しました。
+" +
             (result.stderr.strip()[-900:] or "音声ファイルを確認してください。")
         )
