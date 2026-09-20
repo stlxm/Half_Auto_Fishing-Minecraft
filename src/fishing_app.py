@@ -172,6 +172,103 @@ class App:
         self.auto_status = tk.StringVar(value="音声監視は停止中")
         ttk.Label(box, textvariable=self.auto_status, wraplength=570).pack(anchor="w")
 
+    def schedule_menu_calibration(self):
+        if not self.target_hwnd:
+            messagebox.showwarning("ゲーム画面未選択", "先にMinecraftを操作対象に選択してください。")
+            return
+        self.menu_status.set("3秒以内にMinecraftのポーズメニューを開いてください…")
+        self.root.after(3000, self.finish_menu_calibration)
+
+    def finish_menu_calibration(self):
+        try:
+            hwnd, reason = restore_same_process_window(self.target_hwnd, self.target_pid)
+            if not hwnd:
+                raise RuntimeError(reason)
+            if not is_foreground(hwnd):
+                raise RuntimeError("Minecraftが前面になっていません。ゲームメニューを開いて再登録してください。")
+            self.pause_template = calibrate_pause_menu(hwnd)
+            self.menu_status.set("ポーズメニューを登録しました（解像度やGUI倍率を変えたら再登録）")
+        except Exception as exc:
+            self.pause_template = None
+            self.menu_status.set("メニュー登録失敗：" + str(exc))
+
+    def choose_detection_sound(self):
+        if self.auto_running:
+            messagebox.showinfo("音声監視中", "先に自動検出を停止してください。")
+            return
+        path = filedialog.askopenfilename(
+            parent=self.root, title="検出したい効果音を選択",
+            filetypes=[("音声ファイル", "*.mp3 *.wav *.ogg"), ("すべてのファイル", "*.*")]
+        )
+        if path:
+            self.audio_path = path
+            self.audio_label.set(Path(path).name)
+            self.save_audio_path()
+
+    def save_audio_path(self):
+        try:
+            updated = load_settings()
+            updated["detect_audio_path"] = self.audio_path
+            config_path().write_text(
+                json.dumps(updated, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except OSError as exc:
+            self.auto_status.set(f"検出音を保存できません：{exc}")
+
+    def toggle_auto(self):
+        if self.auto_running:
+            self.stop_auto()
+            return
+        if not self.target_hwnd or not window_title(self.target_hwnd):
+            messagebox.showwarning("ゲーム画面未選択", "Minecraftのウィンドウを選択してください。")
+            return
+        if not self.audio_path or not Path(self.audio_path).is_file():
+            messagebox.showwarning("検出音未選択", "リソースパックで使った音声を選択してください。")
+            return
+        if self.mode_var.get() not in MODES:
+            messagebox.showwarning("操作未設定", "操作内容を選択してください。")
+            return
+        # Audio-only operation shares the same action settings as the manual key.
+        try:
+            if self.enabled:
+                self.data.update(self.validated())
+            else:
+                self.data = self.validated()
+                self.data["volume_gain"] = round(self.volume_var.get(), 1)
+                self.data["detect_audio_path"] = self.audio_path
+        except ValueError as exc:
+            messagebox.showerror("自動検出を開始できません", str(exc))
+            return
+        self.target_pid = window_pid(self.target_hwnd)
+        self.audio_stop = threading.Event()
+        self.auto_running = True
+        self.auto_button.configure(text="自動検出を停止")
+        self.auto_status.set("Windowsの再生音を監視する準備をしています…")
+        self.auto_thread = threading.Thread(
+            target=self.auto_worker, args=(self.audio_path, self.audio_stop), daemon=True
+        )
+        self.auto_thread.start()
+
+    def auto_worker(self, path, stop_event):
+        try:
+            monitor_sound(path, stop_event, self.on_auto_match,
+                          lambda msg: self.events.put(("audio_status", msg)))
+        except Exception as exc:
+            self.events.put(("audio_error", str(exc)))
+        finally:
+            self.events.put(("audio_stopped", stop_event))
+
+    def on_auto_match(self):
+        self.queue_action("音声")
+
+    def stop_auto(self):
+        if not self.auto_running:
+            return
+        self.auto_running = False
+        self.audio_stop.set()
+        self.auto_button.configure(text="自動検出を開始")
+        self.auto_status.set("音声監視を停止しています…")
+
     def capture_hotkey(self):
         """Register a hotkey directly from a physical keypress, including combos."""
         if self.enabled:
