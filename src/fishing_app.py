@@ -153,12 +153,13 @@ class App:
             return
         self.capturing = True
         self.capture_keys = set()
+        self.capture_pending = False
         self.capture_button.configure(text="キーを押してください", state="disabled")
         self.status.set("新しい操作キーを押してください（Escでキャンセル）")
         self.capture_hook = keyboard.hook(self.on_capture_event, suppress=False)
 
     def on_capture_event(self, event):
-        if not self.capturing:
+        if not self.capturing or self.capture_pending:
             return
         name = event.name
         modifiers = {"ctrl", "shift", "alt", "windows"}
@@ -173,13 +174,16 @@ class App:
         if event.event_type != "down" or name in modifiers:
             return
         if name == "esc":
+            self.capture_pending = True
             self.events.put(("captured", None))
             return
         combo = "+".join(sorted(self.capture_keys) + [name])
+        self.capture_pending = True
         self.events.put(("captured", combo))
 
     def finish_capture(self, combo):
         self.capturing = False
+        self.capture_pending = False
         if self.capture_hook is not None:
             keyboard.unhook(self.capture_hook)
             self.capture_hook = None
