@@ -10,6 +10,8 @@ from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
 from resource_pack import create_resource_pack
+from menu_detector import calibrate_pause_menu, is_pause_menu
+from sound_detector import monitor_sound
 from window_control import (list_windows, default_minecraft_window,
                             activate_window, is_foreground, window_title, client_center,
                             window_pid, restore_same_process_window)
@@ -22,6 +24,7 @@ MODES = {
     "右クリックのみ": "click",
     "Esc → 右クリック": "esc_click",
     "Esc → Esc → 右クリック": "esc_esc_click",
+    "メニューならEsc→右クリック／通常時は右クリック": "smart",
 }
 
 DEFAULT = {"hotkey": "f8", "mode": "click", "delay_ms": 120, "cooldown_ms": 500,
@@ -57,8 +60,8 @@ class App:
     def __init__(self, root):
         self.root = root
         self.root.title(APP_NAME)
-        self.root.geometry("565x710")
-        self.root.resizable(False, False)
+        self.root.geometry("625x890")
+        self.root.resizable(True, True)
         self.data = load_settings()
         self.hotkey_var = tk.StringVar(value=self.data["hotkey"])
         self.mode_var = tk.StringVar(value=next(
@@ -84,6 +87,11 @@ class App:
         self.events = queue.Queue()
         self.closing = False
         self.creating_pack = False
+        self.pause_template = None
+        self.audio_path = self.data.get("detect_audio_path", "")
+        self.audio_stop = threading.Event()
+        self.auto_running = False
+        self.auto_thread = None
         self.draw()
         self.refresh_windows()
         self.root.after(100, self.poll)
@@ -124,8 +132,11 @@ class App:
                         variable=self.focus_var).pack(anchor="w", pady=(9, 4))
         ttk.Label(box, text="対象を選択すると、ほかのアプリへの誤入力を防止します。",
                   foreground="#666666").pack(anchor="w")
-        ttk.Label(box, text="注意：Escでメニューが開く場合は右クリックのみを選択。",
+        ttk.Label(box, text="メニュー判定には事前にポーズメニューの登録が必要です。",
                   foreground="#8a5200").pack(anchor="w")
+        ttk.Button(box, text="3秒後にポーズメニューを登録", command=self.schedule_menu_calibration).pack(fill="x", pady=(4, 2))
+        self.menu_status = tk.StringVar(value="ポーズメニューは未登録")
+        ttk.Label(box, textvariable=self.menu_status).pack(anchor="w")
         self.button = ttk.Button(box, text="保存して開始", command=self.toggle)
         self.button.pack(fill="x", pady=(12, 6))
         self.rearm_button = ttk.Button(box, text="キー検知を再登録", command=self.rearm_hotkey)
@@ -148,6 +159,18 @@ class App:
         self.pack_button.pack(fill="x")
         self.pack_status = tk.StringVar(value="作成待機中")
         ttk.Label(box, textvariable=self.pack_status).pack(anchor="w", pady=(6, 0))
+        ttk.Separator(box, orient="horizontal").pack(fill="x", pady=10)
+        ttk.Label(box, text="効果音による自動操作（初期状態：オフ）",
+                  font=("Yu Gothic UI", 11, "bold")).pack(anchor="w")
+        ttk.Label(box, text="Windows既定の再生デバイスから音を検出します。").pack(anchor="w")
+        self.audio_label = tk.StringVar(value=Path(self.audio_path).name if self.audio_path else "検出音は未選択")
+        ttk.Label(box, textvariable=self.audio_label).pack(anchor="w", pady=(3, 2))
+        ttk.Button(box, text="検出するMP3・WAV・OGGを選択",
+                   command=self.choose_detection_sound).pack(fill="x")
+        self.auto_button = ttk.Button(box, text="自動検出を開始", command=self.toggle_auto)
+        self.auto_button.pack(fill="x", pady=(6, 2))
+        self.auto_status = tk.StringVar(value="音声監視は停止中")
+        ttk.Label(box, textvariable=self.auto_status, wraplength=570).pack(anchor="w")
 
     def capture_hotkey(self):
         """Register a hotkey directly from a physical keypress, including combos."""
