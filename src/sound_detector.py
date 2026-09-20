@@ -133,21 +133,64 @@ def convert_process_pcm(pcm):
     return resample_poly(mono, 1, 3).astype(np.float32)
 
 
-def monitor_sound(path, target_pid, should_stop, on_match, on_status, threshold=0.70):
-    """Capture only selected game process audio; NEVER fall back to system-wide capture."""
+def rms_dbfs(samples):
+    """RMS of the supplied normalized PCM; silence is -120 dBFS."""
+    signal = np.asarray(samples, dtype=np.float32)
+    if not signal.size:
+        return -120.0
+    rms = float(np.sqrt(np.mean(np.square(signal, dtype=np.float64))))
+    return 20.0 * np.log10(max(rms, 1e-6))
+
+
+class LoudnessTrigger:
+    """Single event per loud burst; must return below reset level to rearm."""
+
+    def __init__(self, threshold_db=-21.0, reset_gap_db=6.0, reset_seconds=0.25):
+        self.threshold_db = float(threshold_db)
+        self.reset_db = self.threshold_db - reset_gap_db
+        self.reset_seconds = reset_seconds
+        self.armed = True
+        self.below_since = None
+
+    def update(self, level_db, now):
+        if self.armed:
+            if level_db >= self.threshold_db:
+                self.armed = False
+                self.below_since = None
+                return True
+            return False
+        if level_db < self.reset_db:
+            if self.below_since is None:
+                self.below_since = now
+            elif now - self.below_since >= self.reset_seconds:
+                self.armed = True
+        else:
+            self.below_since = None
+        return False
+
+
+def monitor_sound(path, target_pid, should_stop, on_match, on_status,
+                  threshold=0.70, detect_mode="signature", volume_threshold_db=-21.0):
+    """Only the selected game process is captured; never mix in browser audio."""
     from proctap import ProcessAudioCapture
 
     if not isinstance(target_pid, int) or target_pid <= 0:
         raise ValueError("MinecraftのプロセスIDを取得できません。ウィンドウを再選択してください。")
-    on_status(f"検出音を解析中… Minecraft PID {target_pid}")
-    templates = make_templates(decode_audio(path))
+    if detect_mode not in ("signature", "volume"):
+        raise ValueError("音声検出方式が不正です")
+    if detect_mode == "volume" and not -60.0 <= float(volume_threshold_db) <= -3.0:
+        raise ValueError("音量基準は -60～-3 dBFS で指定してください")
+    on_status(f"Minecraft PID {target_pid} の音声監視を準備しています…")
+    templates = make_templates(decode_audio(path)) if detect_mode == "signature" else None
+    level_trigger = LoudnessTrigger(volume_threshold_db)
     buffer = np.empty(0, dtype=np.float32)
     last_match = 0.0
-    last_status = time.monotonic()
-    on_status(f"Minecraftの音声だけを監視中（PID {target_pid}）。YouTube音声は対象外です")
+    last_status = 0.0
     tap = ProcessAudioCapture(pid=target_pid)
     try:
         tap.start()
+        label = "音量" if detect_mode == "volume" else "効果音"
+        on_status(f"Minecraftの音声のみ（PID {target_pid}）／{label}検出中")
         while not should_stop.is_set():
             pcm = tap.read(timeout=0.3)
             if not pcm:
@@ -155,11 +198,24 @@ def monitor_sound(path, target_pid, should_stop, on_match, on_status, threshold=
             mono = convert_process_pcm(pcm)
             if mono.size == 0:
                 continue
+            now = time.monotonic()
+            if detect_mode == "volume":
+                # Measure on original 48 kHz audio: no sample-rate conversion
+                # dependence in the loudness trigger. Use 80 ms windows.
+                level = rms_dbfs(mono[-int(0.08 * SAMPLE_RATE):])
+                triggered = level_trigger.update(level, now)
+                if now - last_status >= 1.0:
+                    on_status(f"Minecraft音量 {level:.1f} dBFS／基準 {volume_threshold_db:.1f} dBFS")
+                    last_status = now
+                if triggered and now - last_match >= 4.0 and not should_stop.is_set():
+                    last_match = now
+                    on_status(f"Minecraftの音量が基準超過（{level:.1f} dBFS）")
+                    on_match()
+                continue
             buffer = np.concatenate((buffer, mono))[-int(1.5 * SAMPLE_RATE):]
             if buffer.size < int(0.50 * SAMPLE_RATE):
                 continue
             score = match_score(buffer, templates)
-            now = time.monotonic()
             if now - last_status >= 3.0:
                 on_status(f"Minecraft音声のみ（PID {target_pid}）：類似度 {score:.2f}／基準 {threshold:.2f}")
                 last_status = now
