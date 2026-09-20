@@ -98,6 +98,8 @@ class App:
         self.audio_stop = threading.Event()
         self.auto_running = False
         self.auto_thread = None
+        self.meter_last_update = 0.0
+        self.meter_flash_token = 0
         self.draw()
         self.refresh_windows()
         self.root.after(100, self.poll)
@@ -190,6 +192,22 @@ class App:
         self.auto_button.pack(fill="x", pady=(6, 2))
         self.auto_status = tk.StringVar(value="音声監視は停止中")
         ttk.Label(box, textvariable=self.auto_status, wraplength=570).pack(anchor="w")
+        meter_box = ttk.Frame(box)
+        meter_box.pack(fill="x", pady=(7, 0))
+        self.meter_text = tk.StringVar(value="現在のMinecraft音量：-- dBFS")
+        self.meter_label = tk.Label(
+            meter_box, textvariable=self.meter_text, anchor="w",
+            font=("Yu Gothic UI", 11, "bold"), padx=10, pady=7,
+            bg="#e8eef5", fg="#17324d"
+        )
+        self.meter_label.pack(fill="x")
+        self.meter_value = tk.DoubleVar(value=0.0)
+        self.meter_bar = ttk.Progressbar(meter_box, maximum=60, variable=self.meter_value)
+        self.meter_bar.pack(fill="x", pady=(4, 0))
+        self.meter_state = tk.StringVar(value="音声監視停止中：自動検出を開始すると音量を表示します")
+        ttk.Label(meter_box, textvariable=self.meter_state, wraplength=560).pack(anchor="w")
+        ttk.Label(meter_box, text="青：基準未満／橙：基準以上／緑：自動トリガーを受信",
+                  foreground="#555555").pack(anchor="w")
 
     def schedule_menu_calibration(self):
         if not self.target_hwnd:
@@ -292,6 +310,12 @@ class App:
         self.auto_running = True
         self.auto_button.configure(text="自動検出を停止")
         self.auto_status.set(f"Minecraftの音声のみを取得しています（PID {self.target_pid}）…")
+        self.meter_flash_token += 1
+        self.meter_last_update = 0.0
+        self.meter_text.set("現在のMinecraft音量：取得準備中…")
+        self.meter_state.set("音声の取得を開始しています")
+        self.meter_label.configure(bg="#e8eef5", fg="#17324d")
+        self.meter_value.set(0.0)
         selected_pid = self.target_pid
         self.auto_thread = threading.Thread(
             target=self.auto_worker,
@@ -305,7 +329,9 @@ class App:
             monitor_sound(path, selected_pid, stop_event,
                           lambda: self.on_auto_match(stop_event),
                           lambda msg: self.events.put(("audio_status", (stop_event, msg))),
-                          detect_mode=detect_mode, volume_threshold_db=threshold_db)
+                          detect_mode=detect_mode, volume_threshold_db=threshold_db,
+                          on_level=lambda level, limit, mode: self.events.put(
+                              ("audio_level", (stop_event, level, limit, mode))))
         except Exception as exc:
             self.events.put(("audio_error", (stop_event, str(exc))))
         finally:
@@ -313,6 +339,7 @@ class App:
 
     def on_auto_match(self, stop_event):
         if self.auto_running and self.audio_stop is stop_event and not stop_event.is_set():
+            self.events.put(("audio_detected", stop_event))
             self.queue_action("音声")
 
     def stop_auto(self):
@@ -322,6 +349,11 @@ class App:
         self.audio_stop.set()
         self.auto_button.configure(text="自動検出を開始")
         self.auto_status.set("音声監視を停止しています…")
+        self.meter_flash_token += 1
+        self.meter_text.set("現在のMinecraft音量：-- dBFS")
+        self.meter_state.set("音声監視停止中")
+        self.meter_label.configure(bg="#e8eef5", fg="#17324d")
+        self.meter_value.set(0.0)
 
     def capture_hotkey(self):
         """Register a hotkey directly from a physical keypress, including combos."""
@@ -608,6 +640,36 @@ class App:
                     if kind == "captured":
                         self.finish_capture(detail)
                         continue
+                    if kind == "audio_level":
+                        event_stop, level, limit, detect_mode = detail
+                        if self.auto_running and self.audio_stop is event_stop:
+                            # Tk updates only on the UI thread; bound to ~10 FPS.
+                            now = time.monotonic()
+                            if now - self.meter_last_update >= 0.09:
+                                self.meter_last_update = now
+                                self.meter_text.set(
+                                    f"現在のMinecraft音量：{level:.1f} dBFS　／　基準：{limit:.1f} dBFS"
+                                )
+                                self.meter_value.set(max(0.0, min(60.0, level + 60.0)))
+                                if self.meter_flash_token == 0 or now >= self.meter_flash_until:
+                                    self.meter_label.configure(
+                                        bg="#fff0c7" if level >= limit else "#e8eef5",
+                                        fg="#815400" if level >= limit else "#17324d"
+                                    )
+                                self.meter_state.set(
+                                    "基準以上の音量です" if level >= limit
+                                    else "基準未満：監視中"
+                                )
+                        continue
+                    if kind == "audio_detected":
+                        if self.auto_running and self.audio_stop is detail:
+                            self.meter_flash_token += 1
+                            flash_id = self.meter_flash_token
+                            self.meter_flash_until = time.monotonic() + 1.2
+                            self.meter_label.configure(bg="#c7f4d1", fg="#14532d")
+                            self.meter_state.set("自動トリガーを受信しました（操作の成否は上部の状態欄を確認）")
+                            self.root.after(1200, lambda token=flash_id: self.end_meter_flash(token))
+                        continue
                     if kind == "audio_status":
                         event_stop, status_text = detail
                         if self.auto_running and self.audio_stop is event_stop:
@@ -646,6 +708,13 @@ class App:
         except queue.Empty:
             pass
         self.root.after(100, self.poll)
+
+    def end_meter_flash(self, token):
+        if self.closing or token != self.meter_flash_token:
+            return
+        self.meter_flash_until = 0.0
+        # Keep the current reading, reverting to blue until the next level update.
+        self.meter_label.configure(bg="#e8eef5", fg="#17324d")
 
     def stop(self):
         self.enabled = False
