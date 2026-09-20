@@ -30,7 +30,9 @@ class ResourcePackTests(unittest.TestCase):
                 })
                 self.assertEqual(pack.read(SOUND_ENTRY)[:4], b"OggS")
                 meta = json.loads(pack.read("pack.mcmeta"))
-                self.assertEqual(meta["pack"]["pack_format"], 88)
+                self.assertEqual(meta["pack"]["min_format"], 88)
+                self.assertEqual(meta["pack"]["max_format"], 88)
+                self.assertNotIn("pack_format", meta["pack"])
                 sounds = json.loads(pack.read("assets/minecraft/sounds.json"))
                 self.assertTrue(sounds["entity.fishing_bobber.splash"]["replace"])
 
@@ -61,6 +63,39 @@ class ResourcePackTests(unittest.TestCase):
                 result = pack.read(SOUND_ENTRY)
             self.assertTrue(result.startswith(b"OggS"))
             self.assertNotEqual(result, before)
+
+    def test_five_times_gain_produces_audible_vorbis_in_modern_pack(self):
+        """Regression: ensure a 5x pack contains decodable, non-silent Vorbis."""
+        import subprocess
+        import imageio_ffmpeg
+        import numpy as np
+
+        with TemporaryDirectory() as folder:
+            wav = Path(folder) / "five_x_input.wav"
+            destination = Path(folder) / "five_x_pack.zip"
+            with wave.open(str(wav), "wb") as source:
+                source.setnchannels(1)
+                source.setsampwidth(2)
+                source.setframerate(16000)
+                samples = [int(2500 * math.sin(2 * math.pi * 900 * n / 16000))
+                           for n in range(16000)]
+                source.writeframes(struct.pack("<" + "h" * len(samples), *samples))
+            create_resource_pack(str(wav), str(destination), gain=5.0)
+            with zipfile.ZipFile(destination) as pack:
+                self.assertIsNone(pack.testzip())
+                meta = json.loads(pack.read("pack.mcmeta"))["pack"]
+                self.assertEqual((meta["min_format"], meta["max_format"]), (88, 88))
+                audio = pack.read(SOUND_ENTRY)
+                self.assertTrue(audio.startswith(b"OggS"))
+            result = subprocess.run(
+                [imageio_ffmpeg.get_ffmpeg_exe(), "-v", "error", "-nostdin",
+                 "-i", "pipe:0", "-f", "f32le", "-ac", "1", "-ar", "16000",
+                 "pipe:1"],
+                input=audio, capture_output=True, check=True, timeout=30
+            )
+            pcm = np.frombuffer(result.stdout, dtype="<f4")
+            self.assertGreater(len(pcm), 1000)
+            self.assertGreater(float(np.sqrt(np.mean(pcm * pcm))), 0.015)
 
     def test_stages_zip_in_destination_directory(self):
         # Regression: Windows os.replace raises WinError 17 across drives.
