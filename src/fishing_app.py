@@ -100,6 +100,7 @@ class App:
         self.auto_thread = None
         self.meter_last_update = 0.0
         self.meter_flash_token = 0
+        self.meter_flash_until = 0.0
         self.draw()
         self.refresh_windows()
         self.root.after(100, self.poll)
@@ -311,6 +312,7 @@ class App:
         self.auto_button.configure(text="自動検出を停止")
         self.auto_status.set(f"Minecraftの音声のみを取得しています（PID {self.target_pid}）…")
         self.meter_flash_token += 1
+        self.meter_flash_until = 0.0
         self.meter_last_update = 0.0
         self.meter_text.set("現在のMinecraft音量：取得準備中…")
         self.meter_state.set("音声の取得を開始しています")
@@ -350,6 +352,7 @@ class App:
         self.auto_button.configure(text="自動検出を開始")
         self.auto_status.set("音声監視を停止しています…")
         self.meter_flash_token += 1
+        self.meter_flash_until = 0.0
         self.meter_text.set("現在のMinecraft音量：-- dBFS")
         self.meter_state.set("音声監視停止中")
         self.meter_label.configure(bg="#e8eef5", fg="#17324d")
@@ -656,10 +659,11 @@ class App:
                                         bg="#fff0c7" if level >= limit else "#e8eef5",
                                         fg="#815400" if level >= limit else "#17324d"
                                     )
-                                self.meter_state.set(
-                                    "基準以上の音量です" if level >= limit
-                                    else "基準未満：監視中"
-                                )
+                                if now >= self.meter_flash_until:
+                                    self.meter_state.set(
+                                        "基準以上の音量です" if level >= limit
+                                        else "基準未満：監視中"
+                                    )
                         continue
                     if kind == "audio_detected":
                         if self.auto_running and self.audio_stop is detail:
@@ -713,8 +717,9 @@ class App:
         if self.closing or token != self.meter_flash_token:
             return
         self.meter_flash_until = 0.0
-        # Keep the current reading, reverting to blue until the next level update.
+        # Resume normal threshold coloring at the next meter reading.
         self.meter_label.configure(bg="#e8eef5", fg="#17324d")
+        self.meter_state.set("監視中：現在音量を確認してください" if self.auto_running else "音声監視停止中")
 
     def stop(self):
         self.enabled = False
